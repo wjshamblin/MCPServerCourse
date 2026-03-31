@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Step 09: Public Client + Security Hardening</title>
+<title>Step 08: Public Client + Security Hardening</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reset.min.css">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reveal.min.css">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/theme/night.min.css">
@@ -34,7 +34,7 @@
 
 <!-- Slide 1: Title -->
 <section>
-  <h1>Step 09</h1>
+  <h1>Step 08</h1>
   <h2>Public Client + Security Hardening</h2>
   <p class="highlight">PKCE, allowlists, and audit logging</p>
 </section>
@@ -44,7 +44,7 @@
   <h2>Confidential vs Public Clients</h2>
   <table>
     <thead>
-      <tr><th></th><th>Confidential (Step 08)</th><th>Public (Step 09)</th></tr>
+      <tr><th></th><th>Confidential (Step 07)</th><th>Public (Step 08)</th></tr>
     </thead>
     <tbody>
       <tr><td>Client Secret</td><td>Required</td><td>Not used</td></tr>
@@ -82,7 +82,7 @@
 <!-- Slide 5: Azure Portal Changes -->
 <section>
   <h2>Azure Portal Changes</h2>
-  <p class="small">Changes from Step 08:</p>
+  <p class="small">Changes from Step 07:</p>
   <ul>
     <li>Authentication &rarr; Allow public client flows &rarr; <strong>Yes</strong></li>
     <li>Add platform: <span class="highlight">Mobile and desktop applications</span></li>
@@ -167,7 +167,7 @@ async def query_sql(sql: str, ctx: Context) -> str:
     <li><strong>Audit logging with hash chain:</strong> tamper-detected, append-only</li>
     <li><strong>Defense in depth:</strong> authentication + authorization + audit</li>
   </ul>
-  <p class="small" style="margin-top: 0.5em;"><strong>Note:</strong> These security patterns (allowlist, audit) also apply to Duke OIDC (Step 08a)</p>
+  <p class="small" style="margin-top: 0.5em;"><strong>Note:</strong> These security patterns (allowlist, audit) also apply to Duke OIDC (Step 07a)</p>
   <p class="highlight" style="margin-top: 0.5em;">Next: OBO flow for downstream APIs &rarr;</p>
 </section>
 
