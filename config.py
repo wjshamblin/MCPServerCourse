@@ -25,10 +25,10 @@ class Settings(BaseSettings):
 
     # LLM Configuration (for NL-to-SQL)
     anthropic_api_key: str = Field(default="", description="Anthropic API key for NL-to-SQL")
-    anthropic_model: str = Field(default="claude-sonnet-4-5", description="Anthropic model")
+    anthropic_model: str = Field(default="claude-opus-4-6", description="Anthropic model")
     openai_api_key: str = Field(default="", description="OpenAI API key for NL-to-SQL")
     openai_base_url: str = Field(default="", description="OpenAI base URL (for proxies)")
-    openai_model: str = Field(default="gpt-4o", description="OpenAI model")
+    openai_model: str = Field(default="gpt-5.4", description="OpenAI model")
     llm_provider: str = Field(default="openai", description="LLM provider: 'openai' or 'anthropic'")
 
     @property
