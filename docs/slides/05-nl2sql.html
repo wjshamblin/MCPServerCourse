@@ -173,7 +173,7 @@ ANTHROPIC_MODEL=claude-sonnet-4-5
     <li>LLM uses <code>COUNT(*)</code> instead of <code>SUM(amount)</code> for totals</li>
     <li>Forgets to filter <code>entry_type = 'actual'</code> for spending queries</li>
     <li>Uses calendar year instead of fiscal year</li>
-    <li>Generates CTEs or window functions (SQLite limitations)</li>
+    <li>Generates overly complex queries when simple JOINs suffice</li>
   </ul>
   <p style="margin-top: 1em;">Solution: <span class="highlight">domain context in the prompt</span></p>
   <p class="small">The "IMPORTANT NOTES" section in SCHEMA_CONTEXT addresses each of these</p>
