@@ -34,6 +34,15 @@ class Settings(BaseSettings):
         description="Comma-separated additional OAuth scopes",
     )
 
+    # Access Control
+    allowed_users: str = Field(
+        default="",
+        description="Comma-separated list of allowed user emails (empty = allow all authenticated)",
+    )
+
+    # Audit
+    audit_log_dir: str = Field(default="logs", description="Directory for audit logs")
+
     # LLM Configuration (for NL-to-SQL)
     anthropic_api_key: str = Field(default="", description="Anthropic API key for NL-to-SQL")
     anthropic_model: str = Field(default="claude-sonnet-4-5", description="Anthropic model")
@@ -57,6 +66,12 @@ class Settings(BaseSettings):
     @property
     def additional_auth_scopes_list(self) -> list[str]:
         return [s.strip() for s in self.additional_auth_scopes.split(",") if s.strip()]
+
+    @property
+    def allowed_users_list(self) -> list[str]:
+        if not self.allowed_users.strip():
+            return []
+        return [e.strip().lower() for e in self.allowed_users.split(",") if e.strip()]
 
     @property
     def auth_enabled(self) -> bool:

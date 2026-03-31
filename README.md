@@ -452,3 +452,20 @@ See `docs/azure-setup-step08.md` for the full Azure Portal walkthrough.
 - **Custom scope** — `api://<client-id>/access_as_user` scopes the token to your API
 - **JWTVerifier** — validates tokens using Azure AD's published signing keys (JWKS)
 - **get_access_token()** — access the authenticated user's token in any tool
+
+---
+
+## Step 09: Azure Public Client + Security
+
+### Public vs Confidential
+
+- **Confidential** (step-08): Server has a client secret. More traditional.
+- **Public** (step-09): No client secret. Uses PKCE instead. Simpler, and more secure for many scenarios.
+
+### Security additions
+
+- **User allowlist**: Only specified email addresses can use the server
+- **Audit logging**: Every query is logged with a SHA-256 hash chain for tamper detection
+- **PKCE**: Automatic with FastMCP — prevents authorization code interception
+
+See `docs/azure-setup-step09.md` for Azure Portal changes.

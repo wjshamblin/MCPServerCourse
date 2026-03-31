@@ -1,5 +1,5 @@
 """
-Step 08: Azure OAuth (Confidential Client)
+Step 09: Azure Public Client + Security
 
 Adds:
 - Lifespan for database connection management
@@ -7,6 +7,8 @@ Adds:
 - Server composition with mount()
 - Azure AD OAuth authentication (OAuthProxy, JWTVerifier)
 - get_authenticated_user tool
+- User allowlist authorization
+- Tamper-detected audit logging with SHA-256 hash chain
 """
 
 import csv
@@ -21,6 +23,7 @@ from fastmcp.server.auth.providers.jwt import JWTVerifier
 from fastmcp.server.dependencies import get_access_token
 from fastmcp.prompts import Message
 
+from audit import AuditLogger
 from config import load_config
 from database import DatabasePool, SQLValidationError, DatabaseError
 from nl2sql import nl_to_sql
@@ -28,6 +31,8 @@ from nl2sql import nl_to_sql
 config = load_config()
 logging.basicConfig(level=config.get_log_level(), format="%(asctime)s %(levelname)s [%(name)s] %(message)s")
 logger = logging.getLogger(__name__)
+
+audit = AuditLogger(config.audit_log_dir)
 
 
 # === Lifespan ===
@@ -86,6 +91,24 @@ def get_db(ctx: Context) -> DatabasePool:
     return ctx.lifespan_context["db"]
 
 
+def get_user_email() -> str:
+    """Get the current user's email from their token, or 'anonymous'."""
+    if not config.auth_enabled:
+        return "anonymous"
+    token = get_access_token()
+    if token and token.claims:
+        return token.claims.get("preferred_username", "unknown")
+    return "unknown"
+
+
+def check_user_allowed(email: str) -> bool:
+    """Check if user is in the allowlist (if configured)."""
+    allowed = config.allowed_users_list
+    if not allowed:
+        return True
+    return email.lower() in allowed
+
+
 # === Tools ===
 
 
@@ -95,13 +118,22 @@ async def query_sql(sql: str, ctx: Context) -> str:
 
     Only SELECT queries are allowed. Results limited to 2000 rows.
     """
+    user_email = get_user_email()
+    if not check_user_allowed(user_email):
+        audit.log(user_email, "DENIED", f"query_sql: {sql[:200]}")
+        return json.dumps({"error": "Access denied. Your account is not authorized."})
+
     db = get_db(ctx)
     try:
         rows, total = await db.execute_query(sql, max_rows=config.max_rows)
     except SQLValidationError as e:
+        audit.log(user_email, "QUERY_ERROR", str(e))
         return f"Query validation error: {e}"
     except DatabaseError as e:
+        audit.log(user_email, "QUERY_ERROR", str(e))
         return f"Database error: {e}"
+
+    audit.log(user_email, "QUERY", sql[:200], result_count=total)
 
     if total > config.warning_rows:
         await ctx.warning(f"Query returned {total:,} rows (showing {min(total, config.max_rows):,})")
@@ -119,12 +151,18 @@ async def ask(question: str, ctx: Context) -> str:
     - "Which grants have less than 10% budget remaining?"
     - "Show me total expenses by department for FY2025"
     """
+    user_email = get_user_email()
+    if not check_user_allowed(user_email):
+        audit.log(user_email, "DENIED", f"ask: {question[:200]}")
+        return json.dumps({"error": "Access denied. Your account is not authorized."})
+
     await ctx.info(f"Understanding: {question}")
     db = get_db(ctx)
 
     try:
         sql = await nl_to_sql(question, config)
     except Exception as e:
+        audit.log(user_email, "NL2SQL_ERROR", str(e))
         return f"Failed to generate SQL: {e}"
 
     await ctx.info(f"Generated SQL: {sql}")
@@ -132,7 +170,10 @@ async def ask(question: str, ctx: Context) -> str:
     try:
         rows, total = await db.execute_query(sql, max_rows=config.max_rows)
     except (SQLValidationError, DatabaseError) as e:
+        audit.log(user_email, "QUERY_ERROR", f"{e} | SQL: {sql[:100]}")
         return f"Query error: {e}\nSQL: {sql}"
+
+    audit.log(user_email, "NL_QUERY", f"Q: {question[:100]} | SQL: {sql[:100]}", result_count=total)
 
     return json.dumps({"question": question, "sql": sql, "total_rows": total, "data": rows})
 
