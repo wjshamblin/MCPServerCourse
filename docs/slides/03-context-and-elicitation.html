@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Step 03: Context, Logging, and Elicitation</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reset.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reveal.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/theme/night.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/plugin/highlight/monokai.min.css">
+<style>
+  .reveal { font-size: 32px; }
+  .reveal h1 { text-transform: none; font-size: 1.8em; }
+  .reveal h2 { text-transform: none; font-size: 1.4em; }
+  .reveal h3 { text-transform: none; font-size: 1.1em; }
+  .reveal pre { width: 100%; margin: 0.4em 0; }
+  .reveal pre code { max-height: 400px; font-size: 0.75em; line-height: 1.35; }
+  .reveal ul, .reveal ol { text-align: left; font-size: 0.9em; }
+  .reveal li { margin-bottom: 0.3em; }
+  .reveal p { font-size: 0.9em; }
+  .reveal .small { font-size: 0.65em; }
+  .reveal .highlight { color: #42affa; }
+  .reveal table { margin: 0 auto; font-size: 0.8em; }
+  .reveal table th, .reveal table td { padding: 0.2em 0.6em; border: 1px solid #444; }
+  .reveal table th { background: #333; }
+  .reveal .two-col { display: flex; gap: 2em; }
+  .reveal .two-col > * { flex: 1; }
+  .reveal .slides section { overflow: hidden; }
+</style>
+</head>
+<body>
+<div class="reveal">
+<div class="slides">
+
+<!-- Title Slide -->
+<section>
+  <h1>Step 03: Context, Logging, and Elicitation</h1>
+  <h3>Your tools' connection back to the client</h3>
+  <aside class="notes">So far our tools have been simple functions that take input and return output. Now we add bidirectional communication: your tools can log messages, report progress, and even ask the user questions mid-execution.</aside>
+</section>
+
+<!-- The Context Object -->
+<section>
+  <h2>The Context Object</h2>
+  <p>Gateway to MCP features inside your tools</p>
+  <ul>
+    <li>Auto-injected via <code>ctx: Context</code> parameter</li>
+    <li>Hidden from the tool schema (LLM never sees it)</li>
+    <li>Requires <code>async def</code> (all Context methods are async)</li>
+  </ul>
+  <aside class="notes">The Context object is how your tool communicates with the MCP client during execution. You simply add a ctx: Context parameter to your function and FastMCP injects it automatically. The LLM never sees this parameter in the tool schema.</aside>
+</section>
+
+<!-- Context Injection -->
+<section>
+  <h2>Context Injection</h2>
+  <pre><code class="language-python" data-trim>
+from fastmcp import Context, FastMCP
+
+@mcp.tool
+async def my_tool(query: str, ctx: Context) -> str:
+    # ctx is injected automatically
+    # LLM only sees: {"query": "string"}
+    await ctx.info("Working on it...")
+    return "done"
+  </code></pre>
+  <ul class="small">
+    <li><code>ctx</code> is stripped from the JSON schema</li>
+    <li>Function must be <code>async def</code></li>
+    <li>Works with tools, not resources or prompts</li>
+  </ul>
+  <aside class="notes">Here is the pattern. Add ctx: Context as a parameter. FastMCP sees the Context type annotation and knows to inject the object at call time, removing it from the schema. The LLM only sees the query parameter. Note the function must be async because all context methods are awaitable.</aside>
+</section>
+
+<!-- Logging to the Client -->
+<section>
+  <h2>Logging to the Client</h2>
+  <table>
+    <thead>
+      <tr><th>Method</th><th>When to use</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>ctx.debug(msg)</code></td><td>Verbose diagnostic info</td></tr>
+      <tr><td><code>ctx.info(msg)</code></td><td>Status updates</td></tr>
+      <tr><td><code>ctx.warning(msg)</code></td><td>Something unexpected</td></tr>
+      <tr><td><code>ctx.error(msg)</code></td><td>Something failed</td></tr>
+    </tbody>
+  </table>
+  <p class="small" style="margin-top: 1em;">These go to the <strong>client</strong>, not to your server logs.</p>
+  <aside class="notes">These logging methods send messages back to the MCP client during tool execution. The client can display them to the user or in a debug panel. This is different from Python's logging module, which writes to your server logs. Context logging is for the user to see.</aside>
+</section>
+
+<!-- Progress Reporting -->
+<section>
+  <h2>Progress Reporting</h2>
+  <pre><code class="language-python" data-trim>
+@mcp.tool
+async def analyze_text(text: str, ctx: Context) -> str:
+    await ctx.info("Starting text analysis...")
+    await ctx.report_progress(progress=1, total=4)
+    words = text.split()
+    await ctx.report_progress(progress=2, total=4)
+    # ... compute frequencies ...
+    await ctx.report_progress(progress=3, total=4)
+    sentences = len([s for s in text.split(".") if s.strip()])
+    await ctx.report_progress(progress=4, total=4)
+    await ctx.info("Analysis complete")
+    return json.dumps({"word_count": len(words), ...})
+  </code></pre>
+  <p class="small">Clients can display a progress bar based on <code>progress</code> / <code>total</code>.</p>
+  <aside class="notes">Progress reporting lets the client show the user how far along a long-running operation is. You call report_progress with the current step and the total number of steps. The client can render this as a progress bar. Combine it with info logging for detailed status updates.</aside>
+</section>
+
+<!-- Elicitation: Interactive Input -->
+<section>
+  <h2>Elicitation: Interactive Input</h2>
+  <ul>
+    <li>Tool can <strong>pause</strong> and ask the user a question</li>
+    <li>User responds through the MCP client</li>
+    <li>Three possible outcomes: <span class="highlight">accept</span>, <span class="highlight">decline</span>, <span class="highlight">cancel</span></li>
+    <li>Powerful for confirmations and multi-step workflows</li>
+  </ul>
+  <aside class="notes">Elicitation is one of the most powerful MCP features. Your tool can pause mid-execution and ask the user a question. The MCP client presents the question to the user, collects their response, and sends it back to your tool. This enables confirmation dialogs, multi-step wizards, and interactive workflows.</aside>
+</section>
+
+<!-- Elicitation in Code -->
+<section>
+  <h2>Elicitation in Code</h2>
+  <pre><code class="language-python" data-trim>
+@mcp.tool
+async def delete_records(table: str, confirm: bool = False,
+                         ctx: Context = None) -> str:
+    if not confirm:
+        result = await ctx.elicit(
+            message=f"Delete all records from '{table}'?",
+            response_type=bool,
+        )
+        if result.action != "accept" or not result.data:
+            return "Operation cancelled."
+    await ctx.warning(f"Simulating delete from '{table}'")
+    return f"(Simulated) Deleted all records from '{table}'."
+  </code></pre>
+  <aside class="notes">Here is a real example from the codebase. The delete_records tool asks the user for confirmation before proceeding. The elicit call pauses the tool, sends the question to the client, and waits for the user's response. The response_type tells the client what kind of input to collect.</aside>
+</section>
+
+<!-- Elicitation Response Handling -->
+<section>
+  <h2>Elicitation Response Handling</h2>
+  <pre><code class="language-python" data-trim>
+result = await ctx.elicit(
+    "Are you sure?",
+    response_type=bool,
+)
+
+if result.action == "accept":
+    # User said yes
+    data = result.data  # the actual value (True/False)
+elif result.action == "decline":
+    # User said no
+    ...
+elif result.action == "cancel":
+    # User cancelled the dialog
+    ...
+  </code></pre>
+  <ul class="small">
+    <li><code>action</code> &mdash; what the user did (accept/decline/cancel)</li>
+    <li><code>data</code> &mdash; the typed value the user provided</li>
+    <li><code>response_type</code> can be <code>bool</code>, <code>str</code>, or a Pydantic model</li>
+  </ul>
+  <aside class="notes">The elicitation result has two key fields. Action tells you what the user did: accept means they provided a response, decline means they said no, cancel means they dismissed the dialog. Data contains the actual typed value. You can use bool for yes/no, str for text input, or even a Pydantic model for structured input.</aside>
+</section>
+
+<!-- Other Context Capabilities -->
+<section>
+  <h2>Other Context Capabilities</h2>
+  <ul>
+    <li><code>ctx.read_resource(uri)</code> &mdash; read a resource from within a tool</li>
+    <li><code>ctx.sample(prompt)</code> &mdash; ask the client's LLM to generate text</li>
+    <li><code>ctx.request_id</code> &mdash; unique ID for this request</li>
+    <li><code>ctx.session_id</code> &mdash; the MCP session ID</li>
+  </ul>
+  <aside class="notes">The Context object has several other capabilities. read_resource lets a tool read one of the server's own resources. sample asks the client's LLM to generate text, which is useful for sub-tasks. request_id and session_id give you identifiers for tracing and debugging.</aside>
+</section>
+
+<!-- Key Takeaways -->
+<section>
+  <h2>Key Takeaways</h2>
+  <ul>
+    <li>Context = your tool's connection to the MCP client</li>
+    <li>Logging levels: debug, info, warning, error</li>
+    <li>Progress: <code>report_progress(progress, total)</code></li>
+    <li>Elicitation: pause and ask the user questions</li>
+    <li>Always use <code>async def</code> with Context</li>
+  </ul>
+  <p style="margin-top: 1em;"><strong>Next:</strong> Building a real financial dataset &rarr;</p>
+  <aside class="notes">Context makes your tools interactive and observable. Logging keeps the user informed. Progress reporting shows completion status. Elicitation enables confirmation dialogs and interactive workflows. Remember: always use async def when you need context. In the next step we'll put these concepts to work with a real dataset.</aside>
+</section>
+
+</div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reveal.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/plugin/highlight/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/plugin/notes/notes.min.js"></script>
+<script>
+Reveal.initialize({
+  hash: true,
+  plugins: [RevealHighlight, RevealNotes]
+});
+</script>
+</body>
+</html>
