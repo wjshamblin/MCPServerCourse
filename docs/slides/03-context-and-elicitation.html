@@ -132,43 +132,45 @@ async def analyze_text(text: str, ctx: Context) -> str:
 async def delete_records(table: str, confirm: bool = False,
                          ctx: Context = None) -> str:
     if not confirm:
-        result = await ctx.elicit(
-            message=f"Delete all records from '{table}'?",
-            response_type=bool,
-        )
-        if result.action != "accept" or not result.data:
-            return "Operation cancelled."
+        try:
+            result = await ctx.elicit(
+                message=f"Delete all records from '{table}'?",
+                response_type=["Confirm delete", "Cancel"],
+            )
+            if result.action != "accept" \
+               or result.data != "Confirm delete":
+                return "Operation cancelled."
+        except Exception:
+            return "Client does not support elicitation."
     await ctx.warning(f"Simulating delete from '{table}'")
-    return f"(Simulated) Deleted all records from '{table}'."
+    return f"Deleted all records from '{table}'."
   </code></pre>
-  <aside class="notes">Here is a real example from the codebase. The delete_records tool asks the user for confirmation before proceeding. The elicit call pauses the tool, sends the question to the client, and waits for the user's response. The response_type tells the client what kind of input to collect.</aside>
+  <aside class="notes">The elicit call pauses the tool and presents choices to the user. We use a list of strings instead of a bare bool so the user sees descriptive options. The try/except handles clients that don't support elicitation — Claude Code supports it, but Claude Desktop does not yet.</aside>
 </section>
 
 <!-- Elicitation Response Handling -->
 <section>
-  <h2>Elicitation Response Handling</h2>
+  <h2>Elicitation Response</h2>
   <pre><code class="language-python" data-trim>
 result = await ctx.elicit(
-    "Are you sure?",
-    response_type=bool,
+    "Delete records?",
+    response_type=["Confirm delete", "Cancel"],
 )
 
 if result.action == "accept":
-    # User said yes
-    data = result.data  # the actual value (True/False)
+    # User submitted the form
+    choice = result.data  # "Confirm delete" or "Cancel"
 elif result.action == "decline":
-    # User said no
-    ...
-elif result.action == "cancel":
-    # User cancelled the dialog
+    # User dismissed without choosing
     ...
   </code></pre>
   <ul class="small">
-    <li><code>action</code> &mdash; what the user did (accept/decline/cancel)</li>
-    <li><code>data</code> &mdash; the typed value the user provided</li>
-    <li><code>response_type</code> can be <code>bool</code>, <code>str</code>, or a Pydantic model</li>
+    <li><code>action</code> &mdash; "accept" = user submitted, "decline"/"cancel" = dismissed</li>
+    <li><code>data</code> &mdash; the selected choice (string from the list)</li>
+    <li><code>response_type</code> options: <code>bool</code>, <code>str</code>, <code>list[str]</code>, Pydantic model</li>
+    <li>Client support: Claude Code (v2.1.77+). Not yet in Claude Desktop.</li>
   </ul>
-  <aside class="notes">The elicitation result has two key fields. Action tells you what the user did: accept means they provided a response, decline means they said no, cancel means they dismissed the dialog. Data contains the actual typed value. You can use bool for yes/no, str for text input, or even a Pydantic model for structured input.</aside>
+  <aside class="notes">The response has two key fields. Action tells you how the user interacted: accept means they submitted the form (picked an option), decline/cancel means they dismissed it. Data contains the actual string they selected. Using a list of strings gives descriptive choices instead of a bare True/False. Note that elicitation requires client support — Claude Code supports it but Claude Desktop does not yet.</aside>
 </section>
 
 <!-- Other Context Capabilities -->
