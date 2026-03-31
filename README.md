@@ -431,7 +431,7 @@ When mounted with a namespace, all tools, resources, and prompts from the child 
 
 ---
 
-## Step 07a: Duke OIDC Authentication
+## Step 07: Duke OIDC Authentication
 
 An alternative to Azure AD — authenticate using Duke University's OIDC provider.
 
