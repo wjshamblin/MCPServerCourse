@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Step 09: OBO Flow — Directory Server</title>
+<title>Step 10: OBO Flow — Directory Server</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reset.min.css">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reveal.min.css">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/theme/night.min.css">
@@ -34,7 +34,7 @@
 
 <!-- Slide 1: Title -->
 <section>
-  <h1>Step 09</h1>
+  <h1>Step 10</h1>
   <h2>On-Behalf-Of Flow</h2>
   <p class="highlight">Calling downstream APIs with user delegation</p>
 </section>
@@ -78,7 +78,7 @@ Server calls Graph API AS THE USER</code></pre>
 <section>
   <h2>Two App Registrations Required</h2>
   <ul>
-    <li><strong>App 1:</strong> Financial Server (from Step 07) &mdash; already exists</li>
+    <li><strong>App 1:</strong> Financial Server (from Step 08) &mdash; already exists</li>
     <li><strong>App 2:</strong> Directory Server &mdash; <span class="highlight">NEW</span> registration</li>
     <li>Each has its own client ID, secret, and scope</li>
     <li>The directory app needs Graph permissions</li>
@@ -200,10 +200,11 @@ main.mount(directory_mcp, namespace="directory")
       <tr><td>04</td><td>Dataset generation, database-backed servers</td></tr>
       <tr><td>05</td><td>NL2SQL with LLM integration</td></tr>
       <tr><td>06</td><td>Lifespans, tasks, composition</td></tr>
-      <tr><td>07</td><td>Azure OAuth (confidential)</td></tr>
-      <tr><td>07a</td><td>Duke OIDC (alternative auth path)</td></tr>
-      <tr><td>08</td><td>Public clients, PKCE, audit</td></tr>
-      <tr><td>09</td><td>OBO flow, downstream APIs</td></tr>
+      <tr><td>07</td><td>Duke OIDC authentication</td></tr>
+      <tr><td>08</td><td>Azure OAuth (confidential)</td></tr>
+      <tr><td>09</td><td>Public clients, PKCE, audit</td></tr>
+      <tr><td>10</td><td>OBO flow, downstream APIs</td></tr>
+      <tr><td>11</td><td>MCP Apps</td></tr>
     </tbody>
   </table>
 </section>

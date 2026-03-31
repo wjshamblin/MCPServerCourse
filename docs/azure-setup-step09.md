@@ -1,111 +1,79 @@
-# Azure App Registration: OBO Flow (Step 10)
+# Azure App Registration: Public Client (Step 09)
 
-The On-Behalf-Of (OBO) flow requires a **second** Azure app registration for the directory server. This server exchanges the user's MCP token for a Microsoft Graph token.
+This guide covers converting from a confidential client to a public client configuration.
 
-## Why OBO?
+## What Changes from Step 08
 
-Some organizations restrict application-level Graph API permissions. OBO lets the server call Graph **as the user**, using their delegated permissions. This provides:
+| Setting | Confidential (Step 08) | Public (Step 09) |
+|---------|------------------------|-------------------|
+| Client Secret | Required | Not used |
+| PKCE | Optional | Required (automatic) |
+| Platform | Web | Mobile/Desktop |
+| Security Model | Secret proves server identity | PKCE proves request origin |
 
-- Per-user audit trails (Graph logs show the actual user, not a service account)
-- Granular access control (users only see what they're permitted to see)
-- No need for admin-consented application permissions
+## Why Public Clients?
 
-## Architecture
+Public clients are appropriate when:
+- You cannot securely store a client secret (desktop apps, CLI tools, SPAs)
+- You want to eliminate secret rotation overhead
+- PKCE provides sufficient security for your use case
 
-```
-User -> MCP Client -> Directory Server -> Azure AD (OBO) -> Microsoft Graph
-                           |
-                      User's MCP token                  Graph API token
-                      (custom scope)                    (Graph scopes)
-```
+Public clients + PKCE are considered **more secure** than confidential clients for many deployment scenarios because there is no secret that can be leaked.
 
-1. User authenticates, gets MCP token with `api://<client-id>/access_as_user` scope
-2. Directory server receives the MCP token
-3. Server exchanges it for a Graph token via OBO grant
-4. Server calls Graph API with the Graph token
+## Step 1: Enable Public Client Flows
 
-## Step 1: Create the Directory App Registration
+1. In your app registration, go to **Authentication**
+2. Under **Advanced settings**, set **Allow public client flows** to **Yes**
+3. Click **Save**
 
-1. Azure Portal > **App registrations** > **New registration**
-2. Name: `MCP Directory Server`
-3. Account type: Single tenant
-4. Redirect URI: Web — `http://localhost:8001/mcp/oauth/callback`
-5. Register
+## Step 2: Update Platform Configuration
 
-Copy the **Client ID** and **Tenant ID**.
+1. Still in **Authentication**
+2. Click **Add a platform** > **Mobile and desktop applications**
+3. Add redirect URI: `http://localhost:8000/mcp/oauth/callback`
+4. (Optional) Remove the **Web** platform if you only want public client flows
 
-## Step 2: Create Client Secret
+## Step 3: Remove Client Secret (Optional)
 
-1. **Certificates & secrets** > **New client secret**
-2. Copy the Value — this is `DIR_AZURE_CLIENT_SECRET`
+If you're switching entirely to public client:
+1. Go to **Certificates & secrets**
+2. Delete the client secret created in Step 08
+3. Remove `AZURE_CLIENT_SECRET` from your `.env`
 
-## Step 3: Expose an API
-
-1. **Expose an API** > Set Application ID URI (`api://<client-id>`)
-2. **Add a scope**:
-   - Name: `access_as_user`
-   - Who can consent: Admins and users
-   - Display name: "Access Directory as User"
-   - State: Enabled
-
-## Step 4: Add Microsoft Graph Permissions
-
-1. **API permissions** > **Add a permission** > **Microsoft Graph** > **Delegated permissions**
-2. Add:
-   - `User.Read.All` — Read all users' profiles
-   - `Directory.Read.All` — Read directory data
-3. Click **Grant admin consent** (requires admin role)
-
-**Why admin consent?** These permissions let the app read ANY user's profile in the directory. Individual users can't consent to this — an admin must approve it for the organization.
-
-## Step 5: Configure knownClientApplications (Optional)
-
-If the financial server and directory server share a client, configure consent propagation:
-
-1. In the directory app's **Manifest** editor
-2. Find `"knownClientApplications": []`
-3. Add the financial server's client ID:
-   ```json
-   "knownClientApplications": ["<financial-server-client-id>"]
-   ```
-4. Save
-
-This lets users consent to both apps' scopes in a single prompt.
-
-## Step 6: Configure .env
+## Step 4: Update .env
 
 ```env
-# Directory Server (OBO)
-DIR_AZURE_CLIENT_ID=<Directory app client ID>
-DIR_AZURE_CLIENT_SECRET=<Directory app client secret>
-DIR_AZURE_TENANT_ID=<Tenant ID>
-DIR_MCP_API_SCOPE=access_as_user
-DIR_OAUTH_BASE_URL=http://localhost:8001
-DIR_SERVER_PORT=8001
-DIR_GRAPH_SCOPES=https://graph.microsoft.com/User.Read.All https://graph.microsoft.com/Directory.Read.All
+AZURE_CLIENT_ID=<same as before>
+# AZURE_CLIENT_SECRET=  # Not needed for public client
+AZURE_TENANT_ID=<same as before>
 ```
 
-## The OBO Token Exchange (Detailed)
+## Step 5: Add User Allowlist
 
-```
-POST https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token
+With public client flow, anyone with a valid Azure AD account can authenticate. Add an allowlist to restrict access:
 
-grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer
-client_id=<directory-app-client-id>
-client_secret=<directory-app-secret>
-assertion=<user's MCP token>
-scope=https://graph.microsoft.com/User.Read.All https://graph.microsoft.com/Directory.Read.All
-requested_token_use=on_behalf_of
+```env
+ALLOWED_USERS=alice@university.edu,bob@university.edu
 ```
 
-The response contains an `access_token` scoped for Microsoft Graph, with the user's identity embedded. This token can then be used to call Graph endpoints.
+## PKCE (Proof Key for Code Exchange)
 
-## Token Caching
+PKCE is automatically handled by FastMCP's OAuthProxy. Here's how it works:
 
-The server caches Graph tokens with TTL (default 50 minutes):
-- **Key**: SHA-256 hash of the user's MCP token (first 32 chars)
-- **Value**: Graph token + timestamp + expiration
-- **Eviction**: LRU when cache exceeds 500 entries
-- **Expiry**: Checked on every access (both TTL and token expiration)
+1. Client generates a random `code_verifier` (43-128 chars)
+2. Client computes `code_challenge = BASE64URL(SHA256(code_verifier))`
+3. Authorization request includes `code_challenge`
+4. Token exchange includes `code_verifier`
+5. Azure AD verifies that `SHA256(code_verifier) == code_challenge`
 
-This avoids redundant OBO exchanges for the same user session.
+This prevents authorization code interception attacks because the attacker would need the `code_verifier` to exchange the code.
+
+## When to Use Confidential vs Public
+
+| Scenario | Recommendation |
+|----------|---------------|
+| Server-side app with secure storage | Confidential |
+| Desktop/CLI application | Public + PKCE |
+| Single-page app (browser) | Public + PKCE |
+| Multi-tenant SaaS | Confidential |
+| Development/testing | Either (public is simpler) |

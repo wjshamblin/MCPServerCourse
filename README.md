@@ -431,7 +431,7 @@ When mounted with a namespace, all tools, resources, and prompts from the child 
 
 ---
 
-## Step 07: Azure OAuth — Confidential Client
+## Step 08: Azure OAuth — Confidential Client
 
 Adds Azure AD authentication to the financial server.
 
@@ -443,7 +443,7 @@ Adds Azure AD authentication to the financial server.
 
 ### Setup
 
-See `docs/azure-setup-step07.md` for the full Azure Portal walkthrough.
+See `docs/azure-setup-step08.md` for the full Azure Portal walkthrough.
 
 ### Key concepts
 
@@ -455,12 +455,12 @@ See `docs/azure-setup-step07.md` for the full Azure Portal walkthrough.
 
 ---
 
-## Step 08: Azure Public Client + Security
+## Step 09: Azure Public Client + Security
 
 ### Public vs Confidential
 
-- **Confidential** (step-07): Server has a client secret. More traditional.
-- **Public** (step-08): No client secret. Uses PKCE instead. Simpler, and more secure for many scenarios.
+- **Confidential** (step-08): Server has a client secret. More traditional.
+- **Public** (step-09): No client secret. Uses PKCE instead. Simpler, and more secure for many scenarios.
 
 ### Security additions
 
@@ -468,11 +468,11 @@ See `docs/azure-setup-step07.md` for the full Azure Portal walkthrough.
 - **Audit logging**: Every query is logged with a SHA-256 hash chain for tamper detection
 - **PKCE**: Automatic with FastMCP — prevents authorization code interception
 
-See `docs/azure-setup-step08.md` for Azure Portal changes.
+See `docs/azure-setup-step09.md` for Azure Portal changes.
 
 ---
 
-## Step 09: OBO Flow — Directory Server
+## Step 10: OBO Flow — Directory Server
 
 The final step: a directory lookup server that calls Microsoft Graph on behalf of the user.
 
@@ -507,4 +507,4 @@ models.py              — Pydantic models for results
 - `finance_query_sql`, `finance_ask` — financial tools
 - `directory_find_user`, `directory_get_user_groups` — directory tools
 
-See `docs/azure-setup-step09.md` for the two-app-registration walkthrough.
+See `docs/azure-setup-step10.md` for the two-app-registration walkthrough.
