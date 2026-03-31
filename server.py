@@ -177,17 +177,27 @@ async def delete_records(table: str, confirm: bool = False, ctx: Context = None)
     """Simulate deleting records with elicitation for confirmation.
 
     Demonstrates ctx.elicit() — requesting structured input from the user
-    during tool execution. The LLM client will prompt the user for confirmation.
+    during tool execution. If the client doesn't support elicitation, use
+    confirm=True to bypass the interactive prompt.
+
+    NOTE: Elicitation requires client support. Claude Code supports it
+    (v2.1.77+). Claude Desktop and Claude.ai do not yet support it.
+    Always provide a non-interactive fallback like the confirm parameter.
     """
     if not confirm:
-        result = await ctx.elicit(
-            message=f"Are you sure you want to delete all records from '{table}'? This cannot be undone.",
-            response_type=bool,
-        )
+        try:
+            result = await ctx.elicit(
+                message=f"Are you sure you want to delete all records from '{table}'? This cannot be undone.",
+                response_type=bool,
+            )
 
-        if result.action != "accept" or not result.data:
-            await ctx.info("Delete cancelled by user")
-            return "Operation cancelled."
+            if result.action != "accept" or not result.data:
+                await ctx.info("Delete cancelled by user")
+                return "Operation cancelled."
+        except Exception:
+            # Client doesn't support elicitation — reject by default
+            await ctx.warning("Elicitation not supported by this client. Pass confirm=True to proceed.")
+            return "Operation cancelled — client does not support elicitation. Set confirm=True to bypass."
 
     await ctx.warning(f"Simulating delete of all records from '{table}'")
     await asyncio.sleep(0.5)

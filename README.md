@@ -160,6 +160,13 @@ Tools that use Context methods **must** be defined with `async def` because the 
 
 This is useful for destructive operations that need explicit user confirmation before proceeding.
 
+> **Client support note:** Elicitation requires client support. As of March 2026:
+> - **Claude Code** (v2.1.77+): Supported — shows an interactive prompt
+> - **Claude Desktop**: Not yet supported — will error
+> - **Claude.ai (web)**: Not yet supported — will error
+>
+> **Always provide a non-interactive fallback** (like a `confirm` parameter) so the tool works with any client. The `delete_records` tool demonstrates this pattern with a try/except that catches unsupported clients gracefully.
+
 ## New Tools
 
 | Tool | Parameters | Description |
