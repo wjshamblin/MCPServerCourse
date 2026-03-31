@@ -97,10 +97,12 @@ class Settings(BaseSettings):
 
 def validate_sql(sql: str) -> None:
     stripped = sql.strip().rstrip(";")
-    if not stripped.upper().startswith("SELECT"):
-        raise SQLValidationError("Only SELECT allowed.")
+    upper = stripped.upper()
+    if not (upper.startswith("SELECT") or upper.startswith("WITH")):
+        raise SQLValidationError("Only SELECT/WITH allowed.")
     for p in DANGEROUS_PATTERNS:
         if p.search(stripped): raise SQLValidationError(...)</code></pre>
+  <p class="small">CTEs (<code>WITH</code> clauses) are allowed — LLMs use them for complex queries.</p>
 </section>
 
 <!-- Slide 6: Tool: query_sql -->

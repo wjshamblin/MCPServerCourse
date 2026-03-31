@@ -28,8 +28,9 @@ class SQLValidationError(DatabaseError):
 
 def validate_sql(sql: str) -> None:
     stripped = sql.strip().rstrip(";")
-    if not stripped.upper().startswith("SELECT"):
-        raise SQLValidationError("Only SELECT queries are allowed.")
+    upper = stripped.upper()
+    if not (upper.startswith("SELECT") or upper.startswith("WITH")):
+        raise SQLValidationError("Only SELECT queries (and CTEs with WITH) are allowed.")
     for pattern in DANGEROUS_PATTERNS:
         if pattern.search(stripped):
             raise SQLValidationError(f"Query contains disallowed pattern: {pattern.pattern}")
