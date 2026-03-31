@@ -1,15 +1,17 @@
 """
-Step 02: Resources and Prompts
+Step 03: Context, Logging, and Elicitation
 
 Building on the hello world server, we add:
 - Resources: read-only data the LLM can access (static and dynamic)
 - Resource templates: parameterized URIs for dynamic content
 - Prompts: reusable message templates for common interactions
+- Context-aware tools: logging, progress reporting, and elicitation
 """
 
+import asyncio
 import json
 from datetime import datetime, timezone
-from fastmcp import FastMCP
+from fastmcp import Context, FastMCP
 from fastmcp.prompts import Message
 
 mcp = FastMCP(
@@ -116,6 +118,97 @@ def explain_concept(concept: str, audience: str = "beginner") -> list[Message]:
         ),
         Message("I'll explain this step by step.", role="assistant"),
     ]
+
+
+# === Context-Aware Tools ===
+
+
+@mcp.tool
+async def analyze_text(text: str, ctx: Context) -> str:
+    """Analyze text with progress reporting and context logging.
+
+    Demonstrates:
+    - Context injection (ctx parameter is auto-injected, hidden from schema)
+    - Logging to the client via ctx.info(), ctx.warning()
+    - Progress reporting via ctx.report_progress()
+    """
+    await ctx.info("Starting text analysis...")
+
+    # Step 1: Basic stats
+    await ctx.report_progress(progress=1, total=4)
+    words = text.split()
+    word_count = len(words)
+    char_count = len(text)
+    await ctx.info(f"Counted {word_count} words, {char_count} characters")
+
+    # Step 2: Word frequency
+    await ctx.report_progress(progress=2, total=4)
+    freq: dict[str, int] = {}
+    for word in words:
+        w = word.lower().strip(".,!?;:")
+        freq[w] = freq.get(w, 0) + 1
+    top_words = sorted(freq.items(), key=lambda x: x[1], reverse=True)[:5]
+
+    # Step 3: Sentence count
+    await ctx.report_progress(progress=3, total=4)
+    sentences = len([s for s in text.split(".") if s.strip()])
+
+    if word_count > 1000:
+        await ctx.warning("Large text detected — analysis may be approximate")
+
+    # Step 4: Done
+    await ctx.report_progress(progress=4, total=4)
+    await ctx.info("Analysis complete")
+
+    return json.dumps({
+        "word_count": word_count,
+        "character_count": char_count,
+        "sentence_count": sentences,
+        "top_words": [{"word": w, "count": c} for w, c in top_words],
+    })
+
+
+@mcp.tool
+async def delete_records(table: str, confirm: bool = False, ctx: Context = None) -> str:
+    """Simulate deleting records with elicitation for confirmation.
+
+    Demonstrates ctx.elicit() — requesting structured input from the user
+    during tool execution. The LLM client will prompt the user for confirmation.
+    """
+    if not confirm:
+        result = await ctx.elicit(
+            message=f"Are you sure you want to delete all records from '{table}'? This cannot be undone.",
+            response_type=bool,
+        )
+
+        if result.action != "accept" or not result.data:
+            await ctx.info("Delete cancelled by user")
+            return "Operation cancelled."
+
+    await ctx.warning(f"Simulating delete of all records from '{table}'")
+    await asyncio.sleep(0.5)
+    return f"(Simulated) Deleted all records from '{table}'."
+
+
+@mcp.tool
+async def process_items(items: list[str], ctx: Context) -> str:
+    """Process a list of items with detailed progress reporting.
+
+    Demonstrates progress reporting for batch operations where
+    total is known upfront and progress increments per item.
+    """
+    results = []
+    total = len(items)
+    await ctx.info(f"Processing {total} items...")
+
+    for i, item in enumerate(items):
+        await ctx.report_progress(progress=i + 1, total=total)
+        await ctx.info(f"Processing: {item}")
+        await asyncio.sleep(0.2)
+        results.append(f"Processed: {item.upper()}")
+
+    await ctx.info("All items processed")
+    return json.dumps(results)
 
 
 if __name__ == "__main__":
