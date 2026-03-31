@@ -10,9 +10,11 @@ import json
 import logging
 
 from fastmcp import FastMCP, Context
+from fastmcp.prompts import Message
 
 from config import load_config
 from database import execute_query, get_table_info, get_column_info, SQLValidationError, DatabaseError
+from nl2sql import nl_to_sql
 
 config = load_config()
 logging.basicConfig(level=config.get_log_level(), format="%(asctime)s %(levelname)s [%(name)s] %(message)s")
@@ -150,6 +152,41 @@ University GL accounts follow a standard numbering system:
 """
 
 
+@mcp.tool
+async def ask(question: str, ctx: Context) -> str:
+    """Ask a natural language question about university financial data.
+
+    Converts your question to SQL, executes it, and returns results.
+    Examples:
+    - "What did Computer Science spend on travel last year?"
+    - "Which grants have less than 10% budget remaining?"
+    - "Show me total expenses by department for FY2025"
+    """
+    await ctx.info(f"Understanding question: {question}")
+
+    try:
+        sql = await nl_to_sql(question, config)
+    except ValueError as e:
+        return f"Configuration error: {e}"
+    except Exception as e:
+        logger.error(f"NL2SQL error: {e}")
+        return f"Failed to generate SQL: {e}"
+
+    await ctx.info(f"Generated SQL: {sql}")
+
+    try:
+        rows, total = await execute_query(config.database_path_resolved, sql, max_rows=config.max_rows)
+    except SQLValidationError as e:
+        return f"Generated SQL failed validation: {e}\nSQL: {sql}"
+    except DatabaseError as e:
+        return f"Query execution error: {e}\nSQL: {sql}"
+
+    if total > config.warning_rows:
+        await ctx.warning(f"Query returned {total:,} rows (showing {min(total, config.max_rows):,})")
+
+    return json.dumps({"question": question, "sql": sql, "total_rows": total, "returned_rows": len(rows), "data": rows})
+
+
 @mcp.resource("domain://departments", mime_type="text/markdown")
 def department_list() -> str:
     """Lists all departments organized by school."""
@@ -187,6 +224,46 @@ ITDEPT (Information Technology), FACMGMT (Facilities Management), HR (Human Reso
 LIBR (University Libraries), ATHLET (Athletics), ALUMNI (Alumni Affairs),
 RESADM (Research Administration)
 """
+
+
+# === Prompts ===
+
+
+@mcp.prompt
+def budget_analysis(department: str, fiscal_year: int = 2025) -> list[Message]:
+    """Generate a budget vs actual analysis request for a department."""
+    return [
+        Message(
+            f"Analyze the budget vs actual spending for the {department} department "
+            f"in fiscal year {fiscal_year}. Compare budgeted amounts to actual spending "
+            f"by account category. Highlight any categories that are over or under budget "
+            f"by more than 10%."
+        ),
+    ]
+
+
+@mcp.prompt
+def grant_status(status: str = "active") -> list[Message]:
+    """Generate a grant status report request."""
+    return [
+        Message(
+            f"Generate a report of all {status} grants. For each grant, show: "
+            f"grant name, PI, sponsor, department, total budget, remaining budget, "
+            f"and percentage spent. Flag any grants with less than 10% budget remaining."
+        ),
+    ]
+
+
+@mcp.prompt
+def department_spending(fiscal_year: int = 2025) -> list[Message]:
+    """Generate a department spending comparison request."""
+    return [
+        Message(
+            f"Compare total actual spending across all departments for fiscal year "
+            f"{fiscal_year}. Break down by expense subcategory (salaries, supplies, "
+            f"travel, equipment, services). Show the top 10 departments by total spending."
+        ),
+    ]
 
 
 if __name__ == "__main__":

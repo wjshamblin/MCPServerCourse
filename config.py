@@ -23,6 +23,14 @@ class Settings(BaseSettings):
     warning_rows: int = Field(default=100, description="Row count that triggers a warning")
     log_level: str = Field(default="INFO")
 
+    # LLM Configuration (for NL-to-SQL)
+    anthropic_api_key: str = Field(default="", description="Anthropic API key for NL-to-SQL")
+    anthropic_model: str = Field(default="claude-sonnet-4-5", description="Anthropic model")
+    openai_api_key: str = Field(default="", description="OpenAI API key for NL-to-SQL")
+    openai_base_url: str = Field(default="", description="OpenAI base URL (for proxies)")
+    openai_model: str = Field(default="gpt-4o", description="OpenAI model")
+    llm_provider: str = Field(default="anthropic", description="LLM provider: 'anthropic' or 'openai'")
+
     @property
     def database_path_resolved(self) -> Path:
         return Path(self.database_path)
