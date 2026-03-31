@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Step 01: Hello World MCP Server</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reset.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reveal.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/theme/night.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/plugin/highlight/monokai.min.css">
+<style>
+  .reveal { font-size: 32px; }
+  .reveal h1 { text-transform: none; font-size: 1.8em; }
+  .reveal h2 { text-transform: none; font-size: 1.4em; }
+  .reveal h3 { text-transform: none; font-size: 1.1em; }
+  .reveal pre { width: 100%; margin: 0.4em 0; }
+  .reveal pre code { max-height: 400px; font-size: 0.75em; line-height: 1.35; }
+  .reveal ul, .reveal ol { text-align: left; font-size: 0.9em; }
+  .reveal li { margin-bottom: 0.3em; }
+  .reveal p { font-size: 0.9em; }
+  .reveal .small { font-size: 0.65em; }
+  .reveal .highlight { color: #42affa; }
+  .reveal table { margin: 0 auto; font-size: 0.8em; }
+  .reveal table th, .reveal table td { padding: 0.2em 0.6em; border: 1px solid #444; }
+  .reveal table th { background: #333; }
+  .reveal .two-col { display: flex; gap: 2em; }
+  .reveal .two-col > * { flex: 1; }
+  .reveal .slides section { overflow: hidden; }
+</style>
+</head>
+<body>
+<div class="reveal">
+<div class="slides">
+
+<!-- Title Slide -->
+<section>
+  <h1>Building MCP Servers with FastMCP</h1>
+  <h3>Step 01: Hello World</h3>
+  <p class="small">From zero to a working MCP server in 5 minutes</p>
+  <aside class="notes">Welcome to the first step of the MCP Server course. By the end of this session you will have a running MCP server that an AI assistant can connect to and use.</aside>
+</section>
+
+<!-- What is MCP? -->
+<section>
+  <h2>What is MCP?</h2>
+  <p><strong>Model Context Protocol</strong> &mdash; an open standard for AI-tool integration</p>
+  <ul>
+    <li>Open standard by Anthropic</li>
+    <li>Lets AI assistants connect to external tools and data</li>
+    <li>Language-agnostic protocol (we'll use Python)</li>
+    <li>Three primitives: <span class="highlight">Tools</span>, <span class="highlight">Resources</span>, <span class="highlight">Prompts</span></li>
+  </ul>
+  <aside class="notes">MCP is like a USB-C port for AI. Instead of every AI app building custom integrations, MCP gives us a standard protocol. Today we focus on Tools. Resources and Prompts come in step 02.</aside>
+</section>
+
+<!-- MCP Architecture -->
+<section>
+  <h2>MCP Architecture</h2>
+  <pre style="text-align: center; font-size: 0.9em; background: #1a1a2e; padding: 1em; border-radius: 8px;"><code data-trim data-noescape class="text">
+LLM Client (Claude, Cursor, etc.)
+        &#8597; MCP Protocol
+MCP Server (your code)
+        &#8597;
+Your Data / APIs / Services
+  </code></pre>
+  <p class="small">The MCP server is the bridge between the AI and your systems.</p>
+  <aside class="notes">The client is whatever AI application the user is interacting with. Your MCP server sits in the middle, exposing capabilities that the LLM can discover and call. The server talks to your own backends, databases, APIs, etc.</aside>
+</section>
+
+<!-- What is FastMCP? -->
+<section>
+  <h2>What is FastMCP?</h2>
+  <p>The Python SDK for building MCP servers</p>
+  <ul>
+    <li>One decorator = one tool</li>
+    <li>Type annotations &rarr; automatic JSON schema</li>
+    <li>Multiple transport options (stdio, HTTP, SSE)</li>
+    <li><a href="https://gofastmcp.com">gofastmcp.com</a></li>
+  </ul>
+  <aside class="notes">FastMCP is the official high-level Python SDK. It handles all the protocol details so you can focus on writing plain Python functions. One decorator is all it takes to expose a function as an MCP tool.</aside>
+</section>
+
+<!-- Your First Server -->
+<section>
+  <h2>Your First Server</h2>
+  <pre><code class="language-python" data-trim>
+from fastmcp import FastMCP
+
+mcp = FastMCP(
+    "HelloWorld",
+    instructions="A simple demo MCP server. Use the echo tool "
+                 "to echo messages and the add tool to add numbers.",
+)
+
+@mcp.tool
+def echo(message: str) -> str:
+    """Echo a message back to the caller."""
+    return f"Echo: {message}"
+
+if __name__ == "__main__":
+    mcp.run(transport="http", host="0.0.0.0", port=8000)
+  </code></pre>
+  <aside class="notes">This is a complete MCP server. We create a FastMCP instance with a name and instructions, define a tool with the decorator, and run it. The instructions field tells the LLM what this server does.</aside>
+</section>
+
+<!-- How Tools Work -->
+<section>
+  <h2>How Tools Work</h2>
+  <ul>
+    <li><code>@mcp.tool</code> decorator exposes a function</li>
+    <li>Function name &rarr; tool name</li>
+    <li>Docstring &rarr; tool description</li>
+    <li>Type hints &rarr; input schema (automatic!)</li>
+  </ul>
+  <pre><code class="language-python" data-trim>
+@mcp.tool
+def echo(message: str) -> str:
+    """Echo a message back to the caller."""
+    #     ^-- becomes the tool description
+    return f"Echo: {message}"
+  </code></pre>
+  <aside class="notes">FastMCP inspects your function at registration time. The function name becomes the tool name the LLM sees. The docstring becomes the description. And the type annotations are converted into a JSON schema that validates inputs.</aside>
+</section>
+
+<!-- Type Annotations Matter -->
+<section>
+  <h2>Type Annotations Matter</h2>
+  <pre><code class="language-python" data-trim>
+@mcp.tool
+def add(a: int, b: int) -> int:
+    """Add two numbers together and return the result."""
+    return a + b
+
+@mcp.tool
+def greet(name: str, greeting: str = "Hello") -> str:
+    """Greet someone by name. Optionally customize the greeting."""
+    return f"{greeting}, {name}! Welcome to MCP."
+  </code></pre>
+  <ul class="small">
+    <li><code>int</code> types &rarr; JSON schema <code>{"type": "integer"}</code></li>
+    <li><code>str</code> types &rarr; JSON schema <code>{"type": "string"}</code></li>
+    <li>Default values &rarr; parameter becomes optional</li>
+  </ul>
+  <aside class="notes">Notice how add takes two ints and greet has a default value for greeting. FastMCP converts these into a JSON schema automatically. The LLM uses that schema to know what arguments to pass. Default values make parameters optional in the schema.</aside>
+</section>
+
+<!-- Transport: HTTP Streamable -->
+<section>
+  <h2>Transport: HTTP Streamable</h2>
+  <pre><code class="language-python" data-trim>
+mcp.run(transport="http", host="0.0.0.0", port=8000)
+  </code></pre>
+  <ul>
+    <li>Starts an HTTP endpoint at <code>/mcp/</code></li>
+    <li>Recommended for network deployments</li>
+    <li>Supports multiple simultaneous clients</li>
+    <li>Alternative: <code>"stdio"</code> for local/desktop apps</li>
+  </ul>
+  <aside class="notes">HTTP streamable transport is the modern way to run MCP servers over the network. It exposes a single endpoint at /mcp/ that handles the protocol. Stdio transport is used when the client launches the server as a subprocess, which is common for desktop apps like Claude Desktop.</aside>
+</section>
+
+<!-- Running the Server -->
+<section>
+  <h2>Running the Server</h2>
+  <pre><code class="language-bash" data-trim>
+pip install -r requirements.txt
+python server.py
+# Server at http://localhost:8000/mcp/
+  </code></pre>
+  <p>Requirements:</p>
+  <pre><code class="language-text" data-trim>
+fastmcp>=2.14.0
+uvicorn>=0.34.0
+  </code></pre>
+  <aside class="notes">Two dependencies: fastmcp itself and uvicorn as the ASGI server. Run server.py and you have a working MCP server. Let's see how to connect a client to it.</aside>
+</section>
+
+<!-- Connecting a Client -->
+<section>
+  <h2>Connecting a Client</h2>
+  <p>Add to your MCP client config (e.g. Claude Desktop, Cursor):</p>
+  <pre><code class="language-json" data-trim>
+{
+  "mcpServers": {
+    "hello-world": {
+      "url": "http://localhost:8000/mcp/"
+    }
+  }
+}
+  </code></pre>
+  <p class="small">The client discovers available tools automatically via the MCP protocol.</p>
+  <aside class="notes">Most MCP clients use a JSON configuration file. You just point it at your server URL. The client will connect, discover the available tools, and make them available to the LLM. No manual registration needed.</aside>
+</section>
+
+<!-- Key Takeaways -->
+<section>
+  <h2>Key Takeaways</h2>
+  <ul>
+    <li>FastMCP makes MCP servers trivial to build</li>
+    <li>Tools = functions the LLM can call</li>
+    <li>Type hints drive everything</li>
+    <li>HTTP transport for network access</li>
+  </ul>
+  <p style="margin-top: 1em;"><strong>Next up:</strong> Resources and Prompts &rarr;</p>
+  <aside class="notes">That's everything for step 01. You now know how to create a server, define tools, and run it over HTTP. In step 02 we'll add resources for read-only data and prompts for reusable message templates.</aside>
+</section>
+
+</div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reveal.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/plugin/highlight/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/plugin/notes/notes.min.js"></script>
+<script>
+Reveal.initialize({
+  hash: true,
+  plugins: [RevealHighlight, RevealNotes]
+});
+</script>
+</body>
+</html>
