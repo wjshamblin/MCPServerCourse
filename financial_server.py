@@ -1,28 +1,89 @@
 """
-Step 07: Lifespans, Tasks, and Composition
+Step 08a: Duke OIDC Authentication
 
 Adds:
-- Lifespan for database connection management
-- Background task for long-running report generation
-- Server composition with mount()
+- Duke OIDC authentication via OIDCProxy
+- Custom IntrospectionTokenVerifier for scope validation
+- Encrypted persistent token storage
 """
 
 import csv
 import io
 import json
 import logging
+from pathlib import Path
+from typing import Any
+
+import httpx
 
 from fastmcp import FastMCP, Context
+from fastmcp.server.auth import AccessToken, TokenVerifier
+from fastmcp.server.auth.oidc_proxy import OIDCProxy
+from fastmcp.server.dependencies import get_access_token
 from fastmcp.server.lifespan import lifespan
 from fastmcp.prompts import Message
+from key_value.aio.stores.disk import DiskStore
+from key_value.aio.wrappers.encryption.fernet import FernetEncryptionWrapper
 
-from config import load_config
+from config import load_config, DukeOIDCSettings
 from database import DatabasePool, SQLValidationError, DatabaseError
 from nl2sql import nl_to_sql
 
 config = load_config()
+duke_config = DukeOIDCSettings()
 logging.basicConfig(level=config.get_log_level(), format="%(asctime)s %(levelname)s [%(name)s] %(message)s")
 logger = logging.getLogger(__name__)
+
+
+class IntrospectionTokenVerifier(TokenVerifier):
+    """Token verifier using OAuth 2.0 Token Introspection (RFC 7662).
+
+    Duke OIDC tokens don't include scope claims in JWTs, so standard
+    JWT validation can't verify scopes. Instead, we call Duke's
+    introspection endpoint which returns the full token metadata
+    including scopes.
+    """
+
+    def __init__(self, introspection_endpoint: str, client_id: str, client_secret: str):
+        self.introspection_endpoint = introspection_endpoint
+        self.client_id = client_id
+        self.client_secret = client_secret
+
+    async def verify_token(self, token: str) -> AccessToken | None:
+        """Verify a token by calling the introspection endpoint."""
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                self.introspection_endpoint,
+                data={"token": token},
+                auth=(self.client_id, self.client_secret),
+            )
+
+            if response.status_code != 200:
+                logger.error(f"Introspection failed: {response.status_code}")
+                return None
+
+            data = response.json()
+
+            if not data.get("active", False):
+                logger.warning("Token is not active")
+                return None
+
+            # Build claims from introspection response
+            claims = {
+                "sub": data.get("sub", ""),
+                "client_id": data.get("client_id", ""),
+                "scope": data.get("scope", ""),
+                "dukeNetID": data.get("dukeNetID", ""),
+                "email": data.get("email", ""),
+                "name": data.get("name", ""),
+                "given_name": data.get("given_name", ""),
+                "family_name": data.get("family_name", ""),
+                "dukeUniqueID": data.get("dukeUniqueID", ""),
+                "dukePrimaryAffiliation": data.get("dukePrimaryAffiliation", ""),
+            }
+
+            scopes = data.get("scope", "").split() if data.get("scope") else []
+            return AccessToken(token=token, claims=claims, scopes=scopes)
 
 
 # === Lifespan ===
@@ -43,6 +104,41 @@ async def db_lifespan(server):
         await db.close()
 
 
+# === Duke OIDC Auth Setup ===
+
+auth = None
+if duke_config.oidc_enabled:
+    # Fetch OIDC configuration to get introspection endpoint
+    oidc_config = httpx.get(duke_config.oidc_well_known_url).json()
+    introspection_endpoint = oidc_config.get("introspection_endpoint")
+
+    # Create token verifier using introspection
+    token_verifier = IntrospectionTokenVerifier(
+        introspection_endpoint=introspection_endpoint,
+        client_id=duke_config.oidc_client_id,
+        client_secret=duke_config.oidc_client_secret,
+    )
+
+    # Set up encrypted persistent token storage
+    storage_path = Path(duke_config.storage_dir)
+    storage_path.mkdir(parents=True, exist_ok=True)
+    client_storage = FernetEncryptionWrapper(
+        DiskStore(directory=storage_path),
+        source_material=duke_config.oidc_client_secret,
+    )
+
+    auth = OIDCProxy(
+        config_url=duke_config.oidc_well_known_url,
+        client_id=duke_config.oidc_client_id,
+        client_secret=duke_config.oidc_client_secret,
+        base_url=duke_config.base_url,
+        token_verifier=token_verifier,
+        client_storage=client_storage,
+        extra_authorize_params={"scope": duke_config.oidc_scopes},
+    )
+    logger.info("Duke OIDC authentication enabled")
+
+
 mcp = FastMCP(
     "FinancialData",
     instructions=(
@@ -51,6 +147,7 @@ mcp = FastMCP(
         "accounting concepts. Use query_sql or ask to query the data."
     ),
     lifespan=db_lifespan,
+    auth=auth,
 )
 
 
@@ -158,6 +255,30 @@ async def export_report(
         "total_rows": total,
         "exported_rows": len(rows),
         "csv": csv_content,
+    })
+
+
+@mcp.tool
+async def get_authenticated_user() -> str:
+    """Get information about the currently authenticated Duke user.
+
+    Returns the user's identity from their Duke OIDC token including
+    NetID, email, name, and affiliation.
+    """
+    token = get_access_token()
+    if token is None:
+        return json.dumps({"error": "Not authenticated"})
+
+    claims = token.claims or {}
+    return json.dumps({
+        "netid": claims.get("dukeNetID", "unknown"),
+        "email": claims.get("email", "unknown"),
+        "name": claims.get("name", "unknown"),
+        "given_name": claims.get("given_name", ""),
+        "family_name": claims.get("family_name", ""),
+        "duke_unique_id": claims.get("dukeUniqueID", ""),
+        "affiliation": claims.get("dukePrimaryAffiliation", ""),
+        "sub": claims.get("sub", ""),
     })
 
 

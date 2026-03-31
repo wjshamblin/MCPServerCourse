@@ -40,5 +40,37 @@ class Settings(BaseSettings):
         return levels.get(self.log_level.upper(), logging.INFO)
 
 
+class DukeOIDCSettings(BaseSettings):
+    """Configuration for Duke OIDC authentication."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore",
+    )
+
+    # Duke OIDC
+    oidc_well_known_url: str = Field(
+        default="https://oauth.oit.duke.edu/oidc/.well-known/openid-configuration",
+        description="Duke OIDC discovery endpoint",
+    )
+    oidc_client_id: str = Field(default="", description="Duke OAuth client ID")
+    oidc_client_secret: str = Field(default="", description="Duke OAuth client secret")
+    oidc_scopes: str = Field(
+        default="openid email profile offline_access",
+        description="Space-separated OIDC scopes",
+    )
+
+    # Server
+    server_host: str = Field(default="0.0.0.0")
+    server_port: int = Field(default=8000)
+    base_url: str = Field(default="http://localhost:8000", description="Public URL of the server")
+
+    # Storage
+    storage_dir: str = Field(default="./data/token_storage", description="Token storage directory")
+
+    @property
+    def oidc_enabled(self) -> bool:
+        return bool(self.oidc_client_id and self.oidc_client_secret)
+
+
 def load_config() -> Settings:
     return Settings()

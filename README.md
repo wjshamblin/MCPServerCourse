@@ -22,8 +22,14 @@ The **Model Context Protocol (MCP)** is an open standard that lets AI models int
 ## Running the Server
 
 ```bash
-pip install -r requirements.txt
-python server.py
+# Install uv if you don't have it
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Create virtual environment and install dependencies
+uv sync
+
+# Run the server
+uv run python server.py
 ```
 
 The server starts on `http://0.0.0.0:8000`.
@@ -211,8 +217,8 @@ An **encumbrance** is a commitment to spend money that hasn't been paid yet (e.g
 ## Generating the Dataset
 
 ```bash
-pip install -r requirements.txt
-python generate_data.py
+uv sync
+uv run python generate_data.py
 ```
 
 Options:
@@ -273,13 +279,13 @@ The database layer enforces several safety measures:
 
 ```bash
 # Generate the database first (step-04)
-python generate_data.py
+uv run python generate_data.py
 
 # Copy and edit the environment config
 cp .env.example .env
 
 # Start the financial server
-python financial_server.py
+uv run python financial_server.py
 ```
 
 The server starts on `http://0.0.0.0:8000` by default. Connect a client the same way as previous steps, pointing at `http://localhost:8000/mcp`.
@@ -402,7 +408,7 @@ async def export_report(query_description: str, sql: str, ctx: Context) -> str:
 Background tasks require the `tasks` extra:
 
 ```bash
-pip install "fastmcp[tasks]>=2.14.0"
+uv add "fastmcp[tasks]>=2.14.0"
 ```
 
 The `export_report` tool executes a query and formats the results as CSV. Because it allows up to 50,000 rows, it can take longer than a normal tool call, making it a good fit for background execution.
@@ -428,3 +434,26 @@ When mounted with a namespace, all tools, resources, and prompts from the child 
 | `financial_server.py` | Refactored server with lifespan and background task |
 | `composed_server.py` | Composition demo — mounts the financial server under a namespace |
 | `database.py` | Added `DatabasePool` class for persistent connections |
+
+---
+
+## Step 08a: Duke OIDC Authentication
+
+An alternative to Azure AD — authenticate using Duke University's OIDC provider.
+
+### Duke OIDC vs Azure AD
+
+- **Duke OIDC**: Duke's own identity provider at `oauth.oit.duke.edu`. Uses Shibboleth login. Self-service registration.
+- **Azure AD**: Microsoft's identity platform. Separate app registration. Required for Graph API access.
+
+### Key differences from Azure OAuth
+
+- Uses `OIDCProxy` instead of `OAuthProxy`
+- Discovery URL auto-configures endpoints (no manual endpoint URLs)
+- Requires custom `IntrospectionTokenVerifier` because Duke JWTs don't include scope claims
+- Registration at https://authentication.oit.duke.edu (not Azure Portal)
+- User claims include Duke-specific fields: `dukeNetID`, `dukeUniqueID`, `dukePrimaryAffiliation`
+
+### Setup
+
+See `docs/duke-oidc-setup.md` for the full registration walkthrough.

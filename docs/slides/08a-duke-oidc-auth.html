@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Step 08a: Duke OIDC Authentication</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reset.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reveal.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/theme/night.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/plugin/highlight/monokai.min.css">
+<style>
+  .reveal { font-size: 32px; }
+  .reveal h1 { text-transform: none; font-size: 1.8em; }
+  .reveal h2 { text-transform: none; font-size: 1.4em; }
+  .reveal h3 { text-transform: none; font-size: 1.1em; }
+  .reveal pre { width: 100%; margin: 0.4em 0; }
+  .reveal pre code { max-height: 400px; font-size: 0.75em; line-height: 1.35; }
+  .reveal ul, .reveal ol { text-align: left; font-size: 0.9em; }
+  .reveal li { margin-bottom: 0.3em; }
+  .reveal p { font-size: 0.9em; }
+  .reveal .small { font-size: 0.65em; }
+  .reveal .highlight { color: #42affa; }
+  .reveal table { margin: 0 auto; font-size: 0.8em; }
+  .reveal table th, .reveal table td { padding: 0.2em 0.6em; border: 1px solid #444; }
+  .reveal table th { background: #333; }
+  .reveal .two-col { display: flex; gap: 2em; }
+  .reveal .two-col > * { flex: 1; }
+  .reveal .slides section { overflow: hidden; }
+</style>
+</head>
+<body>
+<div class="reveal">
+<div class="slides">
+
+<!-- Slide 1: Title -->
+<section>
+  <h1>Step 08a</h1>
+  <h2>Duke OIDC Authentication</h2>
+  <p>Securing your MCP server with Duke's identity provider</p>
+</section>
+
+<!-- Slide 2: Duke OIDC vs Azure AD -->
+<section>
+  <h2>Duke OIDC vs Azure AD</h2>
+  <table class="small">
+    <tr><th></th><th>Duke OIDC</th><th>Azure AD</th></tr>
+    <tr><td>Provider</td><td>Duke OIT</td><td>Microsoft</td></tr>
+    <tr><td>Registration</td><td>authentication.oit.duke.edu</td><td>portal.azure.com</td></tr>
+    <tr><td>Login UI</td><td>Duke Shibboleth</td><td>Microsoft login</td></tr>
+    <tr><td>User identity</td><td>NetID, DukeID</td><td>UPN, Object ID</td></tr>
+    <tr><td>Introspection</td><td>Required</td><td>Not needed</td></tr>
+  </table>
+</section>
+
+<!-- Slide 3: OIDC in 60 seconds -->
+<section>
+  <h2>OIDC in 60 Seconds</h2>
+  <ul>
+    <li>OpenID Connect = identity layer on top of OAuth 2.0</li>
+    <li>Uses a discovery URL (<code>.well-known/openid-configuration</code>)</li>
+    <li>Standard endpoints: authorize, token, userinfo, introspect</li>
+    <li>Duke's discovery:<br>
+      <code class="small">https://oauth.oit.duke.edu/oidc/.well-known/openid-configuration</code></li>
+  </ul>
+</section>
+
+<!-- Slide 4: Registering a Duke OAuth Application -->
+<section>
+  <h2>Register a Duke OAuth App</h2>
+  <ul>
+    <li>Register at <code>authentication.oit.duke.edu</code></li>
+    <li>Prerequisite: ServiceNow support group</li>
+    <li>Redirect URI: <code>http://localhost:8000/auth/callback</code></li>
+    <li>Scopes: openid, email, profile, offline_access</li>
+    <li>Enable Introspection: <strong>Yes</strong> (required!)</li>
+  </ul>
+</section>
+
+<!-- Slide 5: Duke OIDC Scopes -->
+<section>
+  <h2>Duke OIDC Scopes</h2>
+  <table>
+    <tr><th>Scope</th><th>What you get</th></tr>
+    <tr><td><code>openid</code></td><td>sub (NetID@duke.edu), dukeNetID, dukeUniqueID</td></tr>
+    <tr><td><code>profile</code></td><td>name, given_name, family_name, dukePrimaryAffiliation</td></tr>
+    <tr><td><code>email</code></td><td>email address</td></tr>
+    <tr><td><code>groups</code></td><td>Duke Group Manager memberships</td></tr>
+    <tr><td><code>offline_access</code></td><td>Refresh tokens (long sessions)</td></tr>
+  </table>
+</section>
+
+<!-- Slide 6: FastMCP OIDCProxy -->
+<section>
+  <h2>FastMCP OIDCProxy</h2>
+  <pre><code class="python" data-trim data-noescape>
+from fastmcp.server.auth.oidc_proxy import OIDCProxy
+
+auth = OIDCProxy(
+    config_url="https://oauth.oit.duke.edu/oidc/"
+               ".well-known/openid-configuration",
+    client_id=settings.oidc_client_id,
+    client_secret=settings.oidc_client_secret,
+    base_url="http://localhost:8000",
+    token_verifier=token_verifier,
+    client_storage=client_storage,
+)
+mcp = FastMCP("Server", auth=auth)
+  </code></pre>
+</section>
+
+<!-- Slide 7: The Introspection Problem -->
+<section>
+  <h2>The Introspection Problem</h2>
+  <ul>
+    <li>Duke OIDC tokens <strong>DON'T</strong> include scope claims in JWT</li>
+    <li>Standard JWT validation can't verify scopes</li>
+    <li>Solution: call Duke's introspection endpoint (RFC 7662)</li>
+    <li>Server sends token &rarr; Duke returns metadata + scopes</li>
+  </ul>
+</section>
+
+<!-- Slide 8: IntrospectionTokenVerifier -->
+<section>
+  <h2>IntrospectionTokenVerifier</h2>
+  <pre><code class="python" data-trim data-noescape>
+class IntrospectionTokenVerifier(TokenVerifier):
+    async def verify_token(self, token: str) -> AccessToken | None:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                self.introspection_endpoint,
+                data={"token": token},
+                auth=(self.client_id, self.client_secret))
+            data = response.json()
+            if not data.get("active"):
+                return None
+            return AccessToken(token=token, claims=claims, scopes=scopes)
+  </code></pre>
+</section>
+
+<!-- Slide 9: Persistent Token Storage -->
+<section>
+  <h2>Persistent Token Storage</h2>
+  <pre><code class="python" data-trim data-noescape>
+from key_value.aio.stores.disk import DiskStore
+from key_value.aio.wrappers.encryption.fernet import FernetEncryptionWrapper
+
+client_storage = FernetEncryptionWrapper(
+    DiskStore(directory="./data/token_storage"),
+    source_material=settings.oidc_client_secret,
+)
+  </code></pre>
+  <ul>
+    <li>Encrypted on disk using Fernet</li>
+    <li>Sessions survive server restarts</li>
+    <li>Client secret used as encryption key material</li>
+  </ul>
+</section>
+
+<!-- Slide 10: Accessing the authenticated user -->
+<section>
+  <h2>Authenticated User</h2>
+  <pre><code class="python" data-trim data-noescape>
+@mcp.tool
+async def get_authenticated_user() -> str:
+    token = get_access_token()
+    claims = token.claims or {}
+    return json.dumps({
+        "netid": claims.get("dukeNetID"),
+        "email": claims.get("email"),
+        "affiliation": claims.get("dukePrimaryAffiliation"),
+    })
+  </code></pre>
+</section>
+
+<!-- Slide 11: Authentication Flow -->
+<section>
+  <h2>Authentication Flow</h2>
+  <pre class="small" style="text-align: center; box-shadow: none;">
+MCP Client &rarr; FastMCP Server &rarr; Duke Shibboleth Login
+                                      &darr;
+              User authenticates with NetID/password
+                                      &darr;
+              Duke redirects with authorization code
+                                      &darr;
+              FastMCP exchanges code for tokens
+                                      &darr;
+              IntrospectionTokenVerifier validates
+                                      &darr;
+              User identity available in tools
+  </pre>
+</section>
+
+<!-- Slide 12: Key Takeaways -->
+<section>
+  <h2>Key Takeaways</h2>
+  <ul>
+    <li>Duke OIDC uses <code>OIDCProxy</code> (not <code>OAuthProxy</code>)</li>
+    <li>Discovery URL auto-configures all endpoints</li>
+    <li>Introspection needed because Duke JWTs lack scope claims</li>
+    <li>Register at authentication.oit.duke.edu (self-service)</li>
+    <li>Encrypted disk storage for persistent sessions</li>
+  </ul>
+  <p class="small" style="margin-top: 0.5em;"><strong>Alternative path:</strong> See Steps 08&ndash;10 for Azure AD auth, public clients, PKCE, and OBO flow</p>
+</section>
+
+</div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reveal.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/plugin/highlight/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/plugin/notes/notes.min.js"></script>
+<script>
+Reveal.initialize({
+  hash: true,
+  plugins: [RevealHighlight, RevealNotes]
+});
+</script>
+</body>
+</html>
