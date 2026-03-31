@@ -161,3 +161,62 @@ This is useful for destructive operations that need explicit user confirmation b
 | `analyze_text` | `text` | Analyzes text (word count, character count, sentence count, top words) with progress reporting and logging |
 | `delete_records` | `table`, `confirm?` | Simulates a destructive delete with elicitation — prompts the user for confirmation unless `confirm=True` |
 | `process_items` | `items` | Processes a list of strings with per-item progress reporting |
+
+---
+
+# Step 04: Financial Dataset Generator
+
+This step creates a standalone data generator that produces ~500K+ synthetic university general ledger transactions in SQLite. The resulting database is large enough to overwhelm LLM context windows, which motivates the NL2SQL patterns in later steps.
+
+## Fund Accounting
+
+Universities use **fund accounting** — money is tracked in separate funds based on restrictions and purpose.
+
+| Fund Code | Fund Name | Type | Purpose |
+|-----------|-----------|------|---------|
+| 10 | General Operating | unrestricted | Primary university operating fund |
+| 20 | Restricted Grants | restricted | Sponsored research and grants |
+| 25 | Restricted Gifts | restricted | Donor-restricted gifts and endowment income |
+| 30 | Endowment | endowment | Endowment principal and investment returns |
+| 40 | Auxiliary Enterprises | auxiliary | Self-supporting operations (housing, dining, parking) |
+| 50 | Agency Funds | agency | Funds held on behalf of others (student organizations) |
+| 60 | Plant Funds | unrestricted | Capital projects and equipment |
+| 70 | Loan Funds | restricted | Student loan programs |
+
+## Chart of Accounts
+
+GL account codes follow standard numbering:
+
+| Range | Category |
+|-------|----------|
+| 1xxx | Assets (cash, receivables, investments, fixed assets) |
+| 2xxx | Liabilities (payables, accrued, deferred revenue, bonds) |
+| 3xxx | Equity (net assets by restriction level) |
+| 4xxx | Revenue (tuition, grants, gifts, investment, auxiliary, clinical) |
+| 5xxx-7xxx | Expenses (salaries, benefits, supplies, travel, equipment, services) |
+
+## Fiscal Year
+
+Higher education uses a **July-June fiscal year**:
+- FY2025 runs from July 1, 2024 through June 30, 2025
+- July = fiscal period 1, June = fiscal period 12
+
+## Encumbrances
+
+An **encumbrance** is a commitment to spend money that hasn't been paid yet (e.g., a purchase order). The dataset includes:
+- **Encumbrance entries** — recording the commitment
+- **Liquidations** — negative encumbrance amounts when the actual expense posts
+- **Types** — purchase orders, contracts, salary commitments, travel authorizations
+
+## Generating the Dataset
+
+```bash
+pip install -r requirements.txt
+python generate_data.py
+```
+
+Options:
+- `--output PATH` — Output database path (default: `data/university_gl.db`)
+- `--transactions N` — Number of transactions to generate (default: 500,000)
+
+The generated `.db` file is gitignored. Generation takes a few minutes and produces a ~100+ MB database.
