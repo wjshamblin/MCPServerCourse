@@ -51,9 +51,11 @@ def greet(name: str, greeting: str = "Hello") -> str:
 def get_about() -> str:
     """Static information about this server."""
     return (
-        "HelloWorld MCP Server v0.2\n"
+        "HelloWorld MCP Server v0.3\n"
         "A demo server for learning MCP concepts.\n"
-        "Available: tools (echo, add, greet), resources, and prompts."
+        "Tools: echo, add, greet, analyze_text, delete_records, process_items\n"
+        "Resources: about, server-time, greeting/{name}, server-config\n"
+        "Prompts: code_review, summarize, explain_concept"
     )
 
 
@@ -82,9 +84,11 @@ def get_server_config() -> str:
     """Exposes server metadata as structured JSON."""
     return json.dumps({
         "server_name": "HelloWorld",
-        "version": "0.2",
+        "version": "0.3",
         "transport": "http-streamable",
-        "capabilities": ["tools", "resources", "prompts"],
+        "tools": ["echo", "add", "greet", "analyze_text", "delete_records", "process_items"],
+        "resources": ["about", "server-time", "greeting/{name}", "server-config"],
+        "prompts": ["code_review", "summarize", "explain_concept"],
     })
 
 
