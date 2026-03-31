@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Step 07: Lifespans, Tasks, and Composition</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reset.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reveal.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/theme/night.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/plugin/highlight/monokai.min.css">
+<style>
+  .reveal h1, .reveal h2, .reveal h3 { text-transform: none; }
+  .reveal pre { width: 100%; }
+  .reveal pre code { max-height: 500px; }
+  .reveal ul { text-align: left; }
+  .reveal .small { font-size: 0.7em; }
+  .reveal .highlight { color: #42affa; }
+  .reveal table { margin: 0 auto; }
+  .reveal table th, .reveal table td { padding: 0.3em 0.8em; border: 1px solid #444; }
+  .reveal table th { background: #333; }
+  .reveal .two-col { display: flex; gap: 2em; }
+  .reveal .two-col > * { flex: 1; }
+</style>
+</head>
+<body>
+<div class="reveal">
+<div class="slides">
+
+<!-- Slide 1: Title -->
+<section>
+  <h1>Step 07</h1>
+  <h2>Lifespans, Tasks, and Composition</h2>
+  <p>Production patterns for MCP servers</p>
+</section>
+
+<!-- Slide 2: Three features for production servers -->
+<section>
+  <h2>Three Features for Production Servers</h2>
+  <ul>
+    <li><span class="highlight">Lifespans</span> &mdash; Server-level setup/teardown<br>
+      <span class="small">(database connections, external clients)</span></li>
+    <li><span class="highlight">Background Tasks</span> &mdash; Long-running operations that don't block<br>
+      <span class="small">(large exports, batch processing)</span></li>
+    <li><span class="highlight">Composition</span> &mdash; Combine multiple servers into one endpoint<br>
+      <span class="small">(financial + directory + analytics)</span></li>
+  </ul>
+</section>
+
+<!-- Slide 3: The problem with per-request connections -->
+<section>
+  <h2>The Problem with Per-Request Connections</h2>
+  <p>In Steps 05&ndash;06, every tool call opens a new SQLite connection:</p>
+  <ul>
+    <li>Connection overhead on <em>every</em> request</li>
+    <li>No connection reuse or pooling</li>
+    <li>What if the database isn't available at startup?</li>
+    <li>No clean shutdown/cleanup</li>
+  </ul>
+  <br>
+  <p class="fragment"><strong>What we want:</strong> open <em>once</em> at startup, close on shutdown</p>
+</section>
+
+<!-- Slide 4: Lifespans: The Solution -->
+<section>
+  <h2>Lifespans: The Solution</h2>
+  <pre><code class="python" data-trim data-noescape>
+from fastmcp.server.lifespan import lifespan
+
+@lifespan
+async def db_lifespan(server):
+    db = DatabasePool(config.database_path_resolved)
+    await db.connect()
+    try:
+        yield {"db": db}    # this dict is the lifespan context
+    finally:
+        await db.close()    # guaranteed cleanup
+
+mcp = FastMCP("Server", lifespan=db_lifespan)
+  </code></pre>
+  <ul class="small">
+    <li>Code before <code>yield</code> runs at <strong>startup</strong></li>
+    <li>Code after <code>yield</code> runs at <strong>shutdown</strong></li>
+    <li>The yielded dict is available to all tools via <code>ctx</code></li>
+  </ul>
+</section>
+
+<!-- Slide 5: Accessing lifespan context in tools -->
+<section>
+  <h2>Accessing Lifespan Context in Tools</h2>
+  <pre><code class="python" data-trim data-noescape>
+def get_db(ctx: Context) -> DatabasePool:
+    """Helper to get the database from lifespan context."""
+    return ctx.lifespan_context["db"]
+
+@mcp.tool
+async def query_sql(sql: str, ctx: Context) -> str:
+    db = get_db(ctx)
+    rows, total = await db.execute_query(sql)
+    return json.dumps({
+        "total_rows": total,
+        "returned_rows": len(rows),
+        "data": rows,
+    })
+  </code></pre>
+  <p class="small">Every tool gets the <em>same</em> database connection &mdash; no per-request overhead</p>
+</section>
+
+<!-- Slide 6: DatabasePool class -->
+<section>
+  <h2>DatabasePool: Persistent Connection Manager</h2>
+  <pre><code class="python" data-trim data-noescape>
+class DatabasePool:
+    def __init__(self, db_path: Path):
+        self.db_path = db_path
+        self._conn: aiosqlite.Connection | None = None
+
+    async def connect(self) -> None:
+        self._conn = await aiosqlite.connect(str(self.db_path))
+        self._conn.row_factory = aiosqlite.Row
+
+    async def close(self) -> None:
+        if self._conn:
+            await self._conn.close()
+            self._conn = None
+
+    async def execute_query(self, sql, max_rows=2000):
+        validate_sql(sql)       # safety check first
+        cursor = await self._conn.execute(sql)
+        ...                     # reuses persistent connection
+
+    async def get_table_info(self):
+        ...                     # schema introspection
+  </code></pre>
+</section>
+
+<!-- Slide 7: Background Tasks: The Problem -->
+<section>
+  <h2>Background Tasks: The Problem</h2>
+  <ul>
+    <li>Some operations take a long time (large CSV exports)</li>
+    <li>Blocking the client during a 30-second export = bad UX</li>
+    <li>MCP tools are synchronous request/response by default</li>
+  </ul>
+  <br><br>
+  <p class="fragment"><strong>Solution:</strong> run as a background task &mdash; client gets a task ID immediately</p>
+</section>
+
+<!-- Slide 8: Background Tasks: The Solution -->
+<section>
+  <h2>Background Tasks: The Solution</h2>
+  <pre><code class="python" data-trim data-noescape>
+@mcp.tool(task=True)
+async def export_report(
+    query_description: str,
+    sql: str,
+    ctx: Context,
+) -> str:
+    """Runs in the background - client gets a task ID."""
+    db = get_db(ctx)
+    await ctx.info(f"Starting report: {query_description}")
+
+    rows, total = await db.execute_query(sql, max_rows=50_000)
+
+    # Generate CSV
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=rows[0].keys())
+    writer.writeheader()
+    writer.writerows(rows)
+
+    return json.dumps({"csv": output.getvalue()})
+  </code></pre>
+  <ul class="small">
+    <li><code>task=True</code> is the only change needed</li>
+    <li>Requires <code>pip install "fastmcp[tasks]"</code></li>
+    <li>Must be <code>async def</code></li>
+  </ul>
+</section>
+
+<!-- Slide 9: Server Composition: The Problem -->
+<section>
+  <h2>Server Composition: The Problem</h2>
+  <ul>
+    <li>You have multiple servers (financial, directory, analytics...)</li>
+    <li>Running them on separate ports is awkward for clients</li>
+    <li>Clients need to connect to multiple endpoints</li>
+    <li>Tool names may collide across servers</li>
+  </ul>
+  <br><br>
+  <p class="fragment"><strong>Solution:</strong> mount them under one server with namespaces</p>
+</section>
+
+<!-- Slide 10: Server Composition: The Solution -->
+<section>
+  <h2>Server Composition: The Solution</h2>
+  <pre><code class="python" data-trim data-noescape>
+from fastmcp import FastMCP
+from financial_server import mcp as financial_mcp
+
+main = FastMCP(
+    "UniversityServices",
+    instructions=(
+        "Unified university services server. Use finance_* "
+        "tools for financial data queries."
+    ),
+)
+
+main.mount(financial_mcp, namespace="finance")
+# Tools become: finance_query_sql, finance_ask, etc.
+  </code></pre>
+  <ul class="small">
+    <li><code>namespace</code> prefix prevents naming collisions</li>
+    <li>Resources get prefixed too</li>
+    <li>Dynamic: add tools to child server &rarr; immediately visible through parent</li>
+  </ul>
+</section>
+
+<!-- Slide 11: Key Takeaways -->
+<section>
+  <h2>Key Takeaways</h2>
+  <ul>
+    <li><span class="highlight">Lifespans</span>: setup/teardown with the <code>yield</code> pattern</li>
+    <li><span class="highlight">Background tasks</span>: <code>task=True</code> for long operations</li>
+    <li><span class="highlight">Composition</span>: <code>mount()</code> to combine servers</li>
+  </ul>
+  <br><br>
+  <p>These patterns make MCP servers <strong>production-ready</strong></p>
+  <br>
+  <p class="small">Next: Adding authentication &rarr;</p>
+</section>
+
+</div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reveal.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/plugin/highlight/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/plugin/notes/notes.min.js"></script>
+<script>
+Reveal.initialize({
+  hash: true,
+  plugins: [RevealHighlight, RevealNotes]
+});
+</script>
+</body>
+</html>
