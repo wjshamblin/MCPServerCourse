@@ -1,4 +1,4 @@
-fastmcp>=2.14.0
+fastmcp[tasks]>=2.14.0
 uvicorn>=0.34.0
 faker>=33.0.0
 aiosqlite>=0.20.0

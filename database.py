@@ -96,3 +96,60 @@ async def get_column_info(db_path: Path, table_name: str) -> dict:
         return {"table_name": table_name, "row_count": count, "columns": columns}
     finally:
         await conn.close()
+
+
+class DatabasePool:
+    """Simple async connection manager for SQLite.
+
+    Used with FastMCP lifespans to open the database once at startup
+    and close it on shutdown, rather than opening per-request.
+    """
+
+    def __init__(self, db_path: Path):
+        self.db_path = db_path
+        self._conn: aiosqlite.Connection | None = None
+
+    async def connect(self) -> None:
+        if not self.db_path.exists():
+            raise DatabaseError(f"Database not found: {self.db_path}")
+        self._conn = await aiosqlite.connect(str(self.db_path))
+        self._conn.row_factory = aiosqlite.Row
+        logger.info(f"Database connected: {self.db_path}")
+
+    async def close(self) -> None:
+        if self._conn:
+            await self._conn.close()
+            self._conn = None
+            logger.info("Database connection closed")
+
+    async def execute_query(self, sql: str, max_rows: int = 2000) -> tuple[list[dict], int]:
+        """Execute a query using the persistent connection."""
+        validate_sql(sql)
+        if not self._conn:
+            raise DatabaseError("Database not connected")
+        cursor = await self._conn.execute(sql)
+        columns = [desc[0] for desc in cursor.description]
+        all_rows = await cursor.fetchall()
+        total = len(all_rows)
+        rows = [dict(zip(columns, row)) for row in all_rows[:max_rows]]
+        return rows, total
+
+    async def get_table_info(self) -> list[dict]:
+        """Get table info using the persistent connection."""
+        if not self._conn:
+            raise DatabaseError("Database not connected")
+        cursor = await self._conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+        )
+        tables = []
+        for row in await cursor.fetchall():
+            name = row[0]
+            if name in ALLOWED_TABLES:
+                count = (await (await self._conn.execute(f"SELECT COUNT(*) FROM [{name}]")).fetchone())[0]
+                cols = await (await self._conn.execute(f"PRAGMA table_info([{name}])")).fetchall()
+                tables.append({
+                    "table_name": name,
+                    "row_count": count,
+                    "columns": [{"name": c[1], "type": c[2], "nullable": not c[3]} for c in cols],
+                })
+        return tables
