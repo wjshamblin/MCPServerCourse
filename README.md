@@ -22,8 +22,14 @@ The **Model Context Protocol (MCP)** is an open standard that lets AI models int
 ## Running the Server
 
 ```bash
-pip install -r requirements.txt
-python server.py
+# Install uv if you don't have it
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Create virtual environment and install dependencies
+uv sync
+
+# Run the server
+uv run python server.py
 ```
 
 The server starts on `http://0.0.0.0:8000`.

@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Step 02: Resources and Prompts</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reset.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reveal.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/theme/night.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/plugin/highlight/monokai.min.css">
+<style>
+  .reveal { font-size: 32px; }
+  .reveal h1 { text-transform: none; font-size: 1.8em; }
+  .reveal h2 { text-transform: none; font-size: 1.4em; }
+  .reveal h3 { text-transform: none; font-size: 1.1em; }
+  .reveal pre { width: 100%; margin: 0.4em 0; }
+  .reveal pre code { max-height: 400px; font-size: 0.75em; line-height: 1.35; }
+  .reveal ul, .reveal ol { text-align: left; font-size: 0.9em; }
+  .reveal li { margin-bottom: 0.3em; }
+  .reveal p { font-size: 0.9em; }
+  .reveal .small { font-size: 0.65em; }
+  .reveal .highlight { color: #42affa; }
+  .reveal table { margin: 0 auto; font-size: 0.8em; }
+  .reveal table th, .reveal table td { padding: 0.2em 0.6em; border: 1px solid #444; }
+  .reveal table th { background: #333; }
+  .reveal .two-col { display: flex; gap: 2em; }
+  .reveal .two-col > * { flex: 1; }
+  .reveal .slides section { overflow: hidden; }
+</style>
+</head>
+<body>
+<div class="reveal">
+<div class="slides">
+
+<!-- Title Slide -->
+<section>
+  <h1>Step 02: Resources and Prompts</h1>
+  <h3>Adding read-only data and reusable templates</h3>
+  <aside class="notes">In step 01 we built tools. Now we complete the picture with the other two MCP primitives: resources and prompts. Resources let you expose data, and prompts give you reusable message templates.</aside>
+</section>
+
+<!-- The Three MCP Primitives -->
+<section>
+  <h2>The Three MCP Primitives</h2>
+  <table>
+    <thead>
+      <tr><th>Primitive</th><th>Purpose</th><th>Example</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><span class="highlight">Tools</span></td><td>Actions the LLM can perform</td><td>Execute a query, send email</td></tr>
+      <tr><td><span class="highlight">Resources</span></td><td>Read-only data for the LLM</td><td>Config files, database schema</td></tr>
+      <tr><td><span class="highlight">Prompts</span></td><td>Reusable message templates</td><td>Code review template</td></tr>
+    </tbody>
+  </table>
+  <aside class="notes">These three primitives are the foundation of MCP. Tools perform actions. Resources expose data. Prompts provide reusable templates. Together they give an LLM everything it needs to work with your systems.</aside>
+</section>
+
+<!-- Resources: What Are They? -->
+<section>
+  <h2>Resources: What Are They?</h2>
+  <ul>
+    <li>Read-only data exposed via URI</li>
+    <li>LLM clients can discover and read them</li>
+    <li>Think of them as "files" the AI can access</li>
+    <li>No side effects (unlike tools)</li>
+  </ul>
+  <aside class="notes">Resources are the simplest primitive. They are read-only, meaning the LLM can read them but cannot modify them. Each resource has a URI that identifies it. The client can list all available resources and read any of them.</aside>
+</section>
+
+<!-- Static Resource -->
+<section>
+  <h2>Static Resource</h2>
+  <pre><code class="language-python" data-trim>
+@mcp.resource("resource://about", mime_type="text/plain")
+def get_about() -> str:
+    """Static information about this server."""
+    return (
+        "HelloWorld MCP Server v0.2\n"
+        "A demo server for learning MCP concepts.\n"
+        "Available: tools (echo, add, greet), resources, and prompts."
+    )
+  </code></pre>
+  <ul class="small">
+    <li>URI: <code>resource://about</code></li>
+    <li><code>mime_type</code> tells the client what format to expect</li>
+    <li>Returns the same content every time</li>
+  </ul>
+  <aside class="notes">This is the simplest kind of resource. It has a fixed URI and returns the same string every time. The mime_type helps the client understand the format. Think of it as a static file the LLM can read.</aside>
+</section>
+
+<!-- Dynamic Resource -->
+<section>
+  <h2>Dynamic Resource</h2>
+  <pre><code class="language-python" data-trim>
+@mcp.resource("resource://server-time", mime_type="application/json")
+def get_server_time() -> str:
+    """Dynamic resource that returns the current server time."""
+    now = datetime.now(timezone.utc)
+    return json.dumps({
+        "utc": now.isoformat(),
+        "unix_timestamp": int(now.timestamp()),
+    })
+  </code></pre>
+  <p>Runs fresh each time the client reads it.</p>
+  <aside class="notes">Dynamic resources look the same as static ones in code, but the function computes a new result each time. Here we return the current server time. The LLM gets fresh data every time it reads this resource.</aside>
+</section>
+
+<!-- Resource Templates -->
+<section>
+  <h2>Resource Templates</h2>
+  <pre><code class="language-python" data-trim>
+@mcp.resource("resource://greeting/{name}", mime_type="text/plain")
+def get_greeting_resource(name: str) -> str:
+    """Resource template — personalized greeting for any name."""
+    return f"Hello, {name}! This greeting was generated "
+           f"from a resource template."
+  </code></pre>
+  <ul class="small">
+    <li>URI parameters use <code>{name}</code> syntax (RFC 6570)</li>
+    <li>Parameters map to function arguments</li>
+    <li>One template &rarr; infinite resources</li>
+  </ul>
+  <aside class="notes">Resource templates let you create parameterized URIs. The curly brace syntax follows RFC 6570 URI templates. The client can fill in the parameter to read different resources from the same template. This is powerful for things like user profiles, database records, etc.</aside>
+</section>
+
+<!-- Resources vs Tools -->
+<section>
+  <h2>Resources vs Tools</h2>
+  <div class="two-col">
+    <div>
+      <h3 class="highlight">Resources</h3>
+      <ul class="small">
+        <li>Read-only</li>
+        <li>URI-addressed</li>
+        <li>For exposing data</li>
+        <li>No side effects</li>
+      </ul>
+    </div>
+    <div>
+      <h3 class="highlight">Tools</h3>
+      <ul class="small">
+        <li>Can have side effects</li>
+        <li>Function-call style</li>
+        <li>For performing actions</li>
+        <li>LLM decides when to call</li>
+      </ul>
+    </div>
+  </div>
+  <p style="margin-top: 1em;" class="small"><strong>Rule of thumb:</strong> If it just returns data &rarr; resource. If it does something &rarr; tool.</p>
+  <aside class="notes">The key distinction is side effects. Resources are safe to read at any time. Tools might change state, send emails, delete records, etc. If you are unsure, ask: does this function change anything? If no, make it a resource. If yes, make it a tool.</aside>
+</section>
+
+<!-- Prompts: What Are They? -->
+<section>
+  <h2>Prompts: What Are They?</h2>
+  <ul>
+    <li>Reusable message templates</li>
+    <li>NOT system prompts &mdash; they're templates a client requests</li>
+    <li>Parameterized with typed arguments</li>
+    <li>Can return single messages or conversations</li>
+  </ul>
+  <aside class="notes">Prompts are often misunderstood. They are NOT system prompts injected into every request. Instead, they are templates that a client can explicitly request. The client picks a prompt, fills in the parameters, and gets back formatted messages to use in a conversation.</aside>
+</section>
+
+<!-- Simple Prompt -->
+<section>
+  <h2>Simple Prompt</h2>
+  <pre><code class="language-python" data-trim>
+@mcp.prompt
+def summarize(text: str, style: str = "concise") -> str:
+    """Generate a summarization request with a specified style."""
+    return f"Please provide a {style} summary of the following "
+           f"text:\n\n{text}"
+  </code></pre>
+  <ul class="small">
+    <li>Returns a plain string &rarr; becomes a <code>user</code> message</li>
+    <li>Default values make parameters optional</li>
+    <li>Client discovers available prompts and their parameters</li>
+  </ul>
+  <aside class="notes">The simplest prompt returns a string. FastMCP wraps it in a user message automatically. The style parameter has a default, so the client can omit it. This gives you a reusable template for summarization requests.</aside>
+</section>
+
+<!-- Multi-message Prompt -->
+<section>
+  <h2>Multi-message Prompt</h2>
+  <pre><code class="language-python" data-trim>
+from fastmcp.prompts import Message
+
+@mcp.prompt
+def code_review(language: str, code: str) -> list[Message]:
+    return [
+        Message(f"Review this {language} code:\n\n```{language}\n{code}\n```"),
+    ]
+
+@mcp.prompt
+def explain_concept(concept: str, audience: str = "beginner") -> list[Message]:
+    return [
+        Message(f"Explain '{concept}' to a {audience} audience."),
+        Message("I'll explain this step by step.", role="assistant"),
+    ]
+  </code></pre>
+  <aside class="notes">For more complex prompts, return a list of Message objects. Each message has content and an optional role. The explain_concept prompt includes an assistant preamble, which seeds the conversation with a specific tone. This is useful for setting up multi-turn interactions.</aside>
+</section>
+
+<!-- Key Decorator Arguments -->
+<section>
+  <h2>Key Decorator Arguments</h2>
+  <table>
+    <thead>
+      <tr><th>Argument</th><th>Purpose</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>uri</code> / <code>name</code></td><td>Identifier for the resource or prompt</td></tr>
+      <tr><td><code>mime_type</code></td><td>Content format (resources only)</td></tr>
+      <tr><td><code>description</code></td><td>Custom description override</td></tr>
+      <tr><td><code>tags</code></td><td>Categorization metadata</td></tr>
+    </tbody>
+  </table>
+  <aside class="notes">These are the most common arguments you will pass to the resource and prompt decorators. The URI or name identifies the item. Mime type tells the client what format to expect. Description overrides the docstring if you need a different public-facing description. Tags help with organization.</aside>
+</section>
+
+<!-- Key Takeaways -->
+<section>
+  <h2>Key Takeaways</h2>
+  <ul>
+    <li>Resources = read-only data via URI</li>
+    <li>Resource templates = parameterized URIs</li>
+    <li>Prompts = reusable message templates</li>
+    <li>Together with tools, these are the three MCP primitives</li>
+  </ul>
+  <p style="margin-top: 1em;"><strong>Next:</strong> Context, Logging, and Elicitation &rarr;</p>
+  <aside class="notes">You now know all three MCP primitives. Tools for actions, resources for data, prompts for templates. In step 03 we'll learn about the Context object, which gives your tools a connection back to the client for logging, progress, and interactive input.</aside>
+</section>
+
+</div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reveal.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/plugin/highlight/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/plugin/notes/notes.min.js"></script>
+<script>
+Reveal.initialize({
+  hash: true,
+  plugins: [RevealHighlight, RevealNotes]
+});
+</script>
+</body>
+</html>
