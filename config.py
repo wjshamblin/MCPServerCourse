@@ -1,0 +1,36 @@
+"""Configuration settings for the Financial MCP Server."""
+
+import logging
+from pathlib import Path
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field
+
+
+class Settings(BaseSettings):
+    """Configuration loaded from environment variables / .env file."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    server_host: str = Field(default="0.0.0.0")
+    server_port: int = Field(default=8000)
+    database_path: str = Field(default="data/university_gl.db", description="Path to the SQLite database")
+    max_rows: int = Field(default=2000, description="Max rows returned per query")
+    warning_rows: int = Field(default=100, description="Row count that triggers a warning")
+    log_level: str = Field(default="INFO")
+
+    @property
+    def database_path_resolved(self) -> Path:
+        return Path(self.database_path)
+
+    def get_log_level(self) -> int:
+        levels = {"DEBUG": logging.DEBUG, "INFO": logging.INFO, "WARNING": logging.WARNING, "ERROR": logging.ERROR}
+        return levels.get(self.log_level.upper(), logging.INFO)
+
+
+def load_config() -> Settings:
+    return Settings()
