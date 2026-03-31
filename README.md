@@ -170,9 +170,9 @@ This is useful for destructive operations that need explicit user confirmation b
 
 ---
 
-# Step 04: Financial Dataset Generator
+# Step 04: Financial Dataset & Query Server
 
-This step creates a standalone data generator that produces ~500K+ synthetic university general ledger transactions in SQLite. The resulting database is large enough to overwhelm LLM context windows, which motivates the NL2SQL patterns in later steps.
+This step creates a synthetic university general ledger dataset and a database-backed MCP server to query it. The dataset is large enough (~500K+ rows) to overwhelm LLM context windows, which motivates the SQL-based query patterns used here and the NL2SQL approach in later steps.
 
 ## Fund Accounting
 
@@ -227,13 +227,7 @@ Options:
 
 The generated `.db` file is gitignored. Generation takes a few minutes and produces a ~100+ MB database.
 
----
-
-# Step 05: Basic Financial Query Server
-
-This step creates the first "real" MCP server — a database-backed query engine for the university general ledger data generated in step-04.
-
-## Architecture
+## Server Architecture
 
 | File | Purpose |
 |------|---------|
@@ -278,7 +272,7 @@ The database layer enforces several safety measures:
 ## Running the Server
 
 ```bash
-# Generate the database first (step-04)
+# Generate the database first
 uv run python generate_data.py
 
 # Copy and edit the environment config
@@ -292,7 +286,7 @@ The server starts on `http://0.0.0.0:8000` by default. Connect a client the same
 
 ---
 
-# Step 06: Natural Language to SQL
+# Step 05: Natural Language to SQL
 
 This step adds an NL-to-SQL capability so users can ask questions in plain English. An LLM generates a SQL query, the server validates it with the same safety checks as `query_sql`, and executes it.
 
@@ -359,7 +353,7 @@ OPENAI_BASE_URL=https://your-proxy.example.com/v1
 
 ---
 
-# Step 07: Lifespans, Tasks, and Composition
+# Step 06: Lifespans, Tasks, and Composition
 
 This step refactors the financial server to use three advanced FastMCP features: **lifespans** for resource management, **background tasks** for long-running operations, and **server composition** for combining multiple servers.
 
@@ -437,7 +431,7 @@ When mounted with a namespace, all tools, resources, and prompts from the child 
 
 ---
 
-## Step 08: Azure OAuth — Confidential Client
+## Step 07: Azure OAuth — Confidential Client
 
 Adds Azure AD authentication to the financial server.
 
@@ -449,7 +443,7 @@ Adds Azure AD authentication to the financial server.
 
 ### Setup
 
-See `docs/azure-setup-step08.md` for the full Azure Portal walkthrough.
+See `docs/azure-setup-step07.md` for the full Azure Portal walkthrough.
 
 ### Key concepts
 
