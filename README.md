@@ -469,3 +469,42 @@ See `docs/azure-setup-step08.md` for the full Azure Portal walkthrough.
 - **PKCE**: Automatic with FastMCP — prevents authorization code interception
 
 See `docs/azure-setup-step09.md` for Azure Portal changes.
+
+---
+
+## Step 10: OBO Flow — Directory Server
+
+The final step: a directory lookup server that calls Microsoft Graph on behalf of the user.
+
+### On-Behalf-Of (OBO) Flow
+
+The user authenticates once. The server exchanges their token for a Graph API token:
+
+```
+User token (api://app/access_as_user) -> OBO exchange -> Graph token (User.Read.All)
+```
+
+### Architecture
+
+```
+directory_server.py    — MCP server with auth
+token_exchange.py      — OBO token cache and exchange
+ms_graph_client.py     — Graph API wrapper
+directory_service.py   — Business logic layer
+models.py              — Pydantic models for results
+```
+
+### Tools
+
+- `find_user(query)` — Search by name, email, or NetID
+- `get_user_groups(user_id)` — Get group memberships
+- `get_authenticated_user()` — Current user info
+- `health_check()` — Service status
+
+### Composed Server
+
+`composed_server.py` mounts both financial + directory servers:
+- `finance_query_sql`, `finance_ask` — financial tools
+- `directory_find_user`, `directory_get_user_groups` — directory tools
+
+See `docs/azure-setup-step10.md` for the two-app-registration walkthrough.

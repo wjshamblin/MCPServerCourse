@@ -78,5 +78,46 @@ class Settings(BaseSettings):
         return bool(self.azure_client_id and self.azure_tenant_id)
 
 
+class DirectorySettings(BaseSettings):
+    """Configuration for the directory server (OBO flow)."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore",
+        env_prefix="DIR_",
+    )
+
+    azure_client_id: str = Field(..., description="Directory app client ID")
+    azure_client_secret: str = Field(..., description="Directory app client secret")
+    azure_tenant_id: str = Field(..., description="Azure tenant ID")
+    mcp_api_scope: str = Field(default="access_as_user")
+    graph_scopes: str = Field(
+        default="https://graph.microsoft.com/User.Read.All https://graph.microsoft.com/Directory.Read.All",
+    )
+    server_host: str = Field(default="0.0.0.0")
+    server_port: int = Field(default=8001)
+    oauth_base_url: str = Field(default="http://localhost:8001")
+    obo_token_cache_ttl: int = Field(default=3000)
+    cache_ttl_seconds: int = Field(default=300)
+    graph_base_url: str = Field(default="https://graph.microsoft.com/beta")
+    additional_auth_scopes: str = Field(default="email,openid,profile,offline_access")
+    log_level: str = Field(default="INFO")
+
+    @property
+    def full_mcp_scope(self) -> str:
+        return f"api://{self.azure_client_id}/{self.mcp_api_scope}"
+
+    @property
+    def graph_scopes_list(self) -> list[str]:
+        return [s.strip() for s in self.graph_scopes.split() if s.strip()]
+
+    @property
+    def token_endpoint(self) -> str:
+        return f"https://login.microsoftonline.com/{self.azure_tenant_id}/oauth2/v2.0/token"
+
+    @property
+    def additional_auth_scopes_list(self) -> list[str]:
+        return [s.strip() for s in self.additional_auth_scopes.split(",") if s.strip()]
+
+
 def load_config() -> Settings:
     return Settings()
