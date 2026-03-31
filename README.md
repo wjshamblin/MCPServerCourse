@@ -22,8 +22,14 @@ The **Model Context Protocol (MCP)** is an open standard that lets AI models int
 ## Running the Server
 
 ```bash
-pip install -r requirements.txt
-python server.py
+# Install uv if you don't have it
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Create virtual environment and install dependencies
+uv sync
+
+# Run the server
+uv run python server.py
 ```
 
 The server starts on `http://0.0.0.0:8000`.
@@ -211,8 +217,8 @@ An **encumbrance** is a commitment to spend money that hasn't been paid yet (e.g
 ## Generating the Dataset
 
 ```bash
-pip install -r requirements.txt
-python generate_data.py
+uv sync
+uv run python generate_data.py
 ```
 
 Options:
@@ -273,13 +279,13 @@ The database layer enforces several safety measures:
 
 ```bash
 # Generate the database first (step-04)
-python generate_data.py
+uv run python generate_data.py
 
 # Copy and edit the environment config
 cp .env.example .env
 
 # Start the financial server
-python financial_server.py
+uv run python financial_server.py
 ```
 
 The server starts on `http://0.0.0.0:8000` by default. Connect a client the same way as previous steps, pointing at `http://localhost:8000/mcp`.

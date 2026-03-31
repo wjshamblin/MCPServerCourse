@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Step 06: Natural Language to SQL</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reset.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reveal.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/theme/night.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/plugin/highlight/monokai.min.css">
+<style>
+  .reveal { font-size: 32px; }
+  .reveal h1 { text-transform: none; font-size: 1.8em; }
+  .reveal h2 { text-transform: none; font-size: 1.4em; }
+  .reveal h3 { text-transform: none; font-size: 1.1em; }
+  .reveal pre { width: 100%; margin: 0.4em 0; }
+  .reveal pre code { max-height: 400px; font-size: 0.75em; line-height: 1.35; }
+  .reveal ul, .reveal ol { text-align: left; font-size: 0.9em; }
+  .reveal li { margin-bottom: 0.3em; }
+  .reveal p { font-size: 0.9em; }
+  .reveal .small { font-size: 0.65em; }
+  .reveal .highlight { color: #42affa; }
+  .reveal table { margin: 0 auto; font-size: 0.8em; }
+  .reveal table th, .reveal table td { padding: 0.2em 0.6em; border: 1px solid #444; }
+  .reveal table th { background: #333; }
+  .reveal .two-col { display: flex; gap: 2em; }
+  .reveal .two-col > * { flex: 1; }
+  .reveal .slides section { overflow: hidden; }
+</style>
+</head>
+<body>
+<div class="reveal">
+<div class="slides">
+
+<!-- Slide 1: Title -->
+<section>
+  <h1>Step 06</h1>
+  <h2>Natural Language to SQL</h2>
+  <p>Ask questions in English, get SQL results</p>
+</section>
+
+<!-- Slide 2: The NL2SQL Pipeline -->
+<section>
+  <h2>The NL2SQL Pipeline</h2>
+  <pre><code class="language-text">"What did Chemistry spend on travel?"
+    ↓ nl2sql.py
+LLM generates SQL
+    ↓ database.py
+Validate SQL (safety check)
+    ↓
+Execute query → Results</code></pre>
+</section>
+
+<!-- Slide 3: Why DDL-based context? -->
+<section>
+  <h2>Why DDL-Based Context?</h2>
+  <ul>
+    <li>LLMs are trained on millions of <code>CREATE TABLE</code> statements</li>
+    <li>DDL with inline comments produces <span class="highlight">much better SQL</span> than prose descriptions</li>
+    <li>We send the full schema as DDL, not as "the table has columns..."</li>
+    <li>The LLM already knows how to read DDL &mdash; meet it where it is</li>
+  </ul>
+</section>
+
+<!-- Slide 4: The Schema Context -->
+<section>
+  <h2>The Schema Context</h2>
+  <pre><code class="language-sql">CREATE TABLE gl_transactions (
+    fiscal_year INTEGER NOT NULL,     -- 2022-2025
+    fiscal_period INTEGER NOT NULL,   -- 1-12 (1=July)
+    department_code TEXT NOT NULL,    -- 'COMPSCI','CHEM'
+    fund_type TEXT NOT NULL,         -- 'unrestricted',...
+    entry_type TEXT NOT NULL,        -- 'actual','budget'
+    amount REAL NOT NULL,            -- Transaction amount
+    ...
+);</code></pre>
+  <p class="small">Inline comments are <span class="highlight">CRITICAL</span> &mdash; they tell the LLM what values look like</p>
+</section>
+
+<!-- Slide 5: Critical notes for the LLM -->
+<section>
+  <h2>Critical Notes for the LLM</h2>
+  <pre><code class="language-sql">-- IMPORTANT NOTES FOR QUERY GENERATION:
+-- 1. Fiscal year runs July 1 - June 30
+--    (fiscal_period 1=July, 12=June)
+-- 2. entry_type: 'actual' = real spending,
+--    'budget' = planned, 'encumbrance' = committed
+-- 3. For actual spending queries, filter:
+--    entry_type = 'actual' AND amount > 0
+-- 4. Use SUM(amount) for totals,
+--    not COUNT(*)
+-- 5. Department codes: COMPSCI, CHEM,
+--    PHYS, MATH, ECE, BME, LAW, etc.</code></pre>
+  <p class="small">These prevent the most common SQL generation mistakes</p>
+</section>
+
+<!-- Slide 6: Extracting SQL from LLM responses -->
+<section>
+  <h2>Extracting SQL from LLM Responses</h2>
+  <pre><code class="language-python">def extract_sql_from_response(text: str) -> str:
+    """Extract SQL from markdown code blocks."""
+    if "```sql" in text:
+        start = text.index("```sql") + 6
+        end = text.index("```", start)
+        return text[start:end].strip()
+    if "```" in text:
+        start = text.index("```") + 3
+        end = text.index("```", start)
+        return text[start:end].strip()
+    ...  # Fall back to finding SELECT</code></pre>
+  <p class="small">LLMs wrap SQL in markdown &mdash; we need to unwrap it</p>
+</section>
+
+<!-- Slide 7: The ask tool -->
+<section>
+  <h2>The ask Tool</h2>
+  <pre><code class="language-python">@mcp.tool
+async def ask(question: str, ctx: Context) -> str:
+    await ctx.info(f"Understanding: {question}")
+    sql = await nl_to_sql(question, config)
+    await ctx.info(f"Generated SQL: {sql}")
+    rows, total = await execute_query(
+        config.database_path_resolved,
+        sql, max_rows=config.max_rows)
+    return json.dumps({"question": question,
+        "sql": sql, "total_rows": total, "data": rows})</code></pre>
+  <p class="small">Chains: nl_to_sql &rarr; validate &rarr; execute &rarr; return results with generated SQL</p>
+</section>
+
+<!-- Slide 8: Prompt Templates -->
+<section>
+  <h2>Prompt Templates</h2>
+  <pre><code class="language-python">@mcp.prompt
+def budget_analysis(department: str,
+                    fiscal_year: int = 2025):
+    """Budget vs actual analysis request."""
+    ...
+
+@mcp.prompt
+def grant_status(status: str = "active"):
+    """Grant portfolio overview."""
+    ...
+
+@mcp.prompt
+def department_spending(fiscal_year: int = 2025):
+    """Cross-department comparison."""
+    ...</code></pre>
+  <p class="small">Reusable starting points &mdash; structured entry points for common queries</p>
+</section>
+
+<!-- Slide 9: LLM Provider Configuration -->
+<section>
+  <h2>LLM Provider Configuration</h2>
+  <pre><code class="language-bash">LLM_PROVIDER=anthropic   # or openai
+ANTHROPIC_API_KEY=sk-...
+ANTHROPIC_MODEL=claude-sonnet-4-5
+
+# Or use OpenAI:
+# LLM_PROVIDER=openai
+# OPENAI_API_KEY=sk-...
+# OPENAI_MODEL=gpt-4o</code></pre>
+  <ul class="small">
+    <li>Supports both Anthropic and OpenAI</li>
+    <li>Configurable via environment variables</li>
+    <li>Provider abstraction in <code>nl2sql.py</code></li>
+  </ul>
+</section>
+
+<!-- Slide 10: Common NL2SQL Pitfalls -->
+<section>
+  <h2>Common NL2SQL Pitfalls</h2>
+  <ul>
+    <li>LLM uses <code>COUNT(*)</code> instead of <code>SUM(amount)</code> for totals</li>
+    <li>Forgets to filter <code>entry_type = 'actual'</code> for spending queries</li>
+    <li>Uses calendar year instead of fiscal year</li>
+    <li>Generates CTEs or window functions (SQLite limitations)</li>
+  </ul>
+  <p style="margin-top: 1em;">Solution: <span class="highlight">domain context in the prompt</span></p>
+  <p class="small">The "IMPORTANT NOTES" section in SCHEMA_CONTEXT addresses each of these</p>
+</section>
+
+<!-- Slide 11: Key Takeaways -->
+<section>
+  <h2>Key Takeaways</h2>
+  <ul>
+    <li><span class="highlight">DDL-based context</span> &gt; prose descriptions</li>
+    <li>Inline comments in DDL are critical</li>
+    <li>Always validate LLM-generated SQL before execution</li>
+    <li>Domain-specific notes prevent common mistakes</li>
+    <li>Prompt templates provide structured entry points</li>
+  </ul>
+  <p style="margin-top: 1em;">Next: Lifespans, Tasks, and Composition &rarr;</p>
+</section>
+
+</div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reveal.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/plugin/highlight/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/plugin/notes/notes.min.js"></script>
+<script>
+Reveal.initialize({
+  hash: true,
+  plugins: [RevealHighlight, RevealNotes]
+});
+</script>
+</body>
+</html>
