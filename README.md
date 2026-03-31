@@ -431,7 +431,7 @@ When mounted with a namespace, all tools, resources, and prompts from the child 
 
 ---
 
-## Step 07: Azure OAuth — Confidential Client
+## Step 08: Azure OAuth — Confidential Client
 
 Adds Azure AD authentication to the financial server.
 
@@ -443,7 +443,7 @@ Adds Azure AD authentication to the financial server.
 
 ### Setup
 
-See `docs/azure-setup-step07.md` for the full Azure Portal walkthrough.
+See `docs/azure-setup-step08.md` for the full Azure Portal walkthrough.
 
 ### Key concepts
 
