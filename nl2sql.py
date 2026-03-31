@@ -169,10 +169,10 @@ async def generate_sql_openai(question: str, config: Settings) -> str:
 async def nl_to_sql(question: str, config: Settings) -> str:
     """Convert a natural language question to SQL."""
     logger.info(f"NL2SQL question: {question}")
-    if config.llm_provider == "openai" and config.openai_api_key:
-        sql = await generate_sql_openai(question, config)
-    elif config.anthropic_api_key:
+    if config.llm_provider == "anthropic" and config.anthropic_api_key:
         sql = await generate_sql_anthropic(question, config)
+    elif config.openai_api_key:
+        sql = await generate_sql_openai(question, config)
     else:
         raise ValueError("No LLM API key configured. Set ANTHROPIC_API_KEY or OPENAI_API_KEY in .env")
     logger.info(f"Generated SQL: {sql}")

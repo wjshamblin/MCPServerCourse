@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     openai_api_key: str = Field(default="", description="OpenAI API key for NL-to-SQL")
     openai_base_url: str = Field(default="", description="OpenAI base URL (for proxies)")
     openai_model: str = Field(default="gpt-4o", description="OpenAI model")
-    llm_provider: str = Field(default="anthropic", description="LLM provider: 'anthropic' or 'openai'")
+    llm_provider: str = Field(default="openai", description="LLM provider: 'openai' or 'anthropic'")
 
     @property
     def database_path_resolved(self) -> Path:
