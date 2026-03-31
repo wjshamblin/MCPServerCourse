@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Step 09: Public Client + Security Hardening</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reset.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reveal.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/theme/night.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/plugin/highlight/monokai.min.css">
+<style>
+  .reveal { font-size: 32px; }
+  .reveal h1 { text-transform: none; font-size: 1.8em; }
+  .reveal h2 { text-transform: none; font-size: 1.4em; }
+  .reveal h3 { text-transform: none; font-size: 1.1em; }
+  .reveal pre { width: 100%; margin: 0.4em 0; }
+  .reveal pre code { max-height: 400px; font-size: 0.75em; line-height: 1.35; }
+  .reveal ul, .reveal ol { text-align: left; font-size: 0.9em; }
+  .reveal li { margin-bottom: 0.3em; }
+  .reveal p { font-size: 0.9em; }
+  .reveal .small { font-size: 0.65em; }
+  .reveal .highlight { color: #42affa; }
+  .reveal table { margin: 0 auto; font-size: 0.8em; }
+  .reveal table th, .reveal table td { padding: 0.2em 0.6em; border: 1px solid #444; }
+  .reveal table th { background: #333; }
+  .reveal .two-col { display: flex; gap: 2em; }
+  .reveal .two-col > * { flex: 1; }
+  .reveal .slides section { overflow: hidden; }
+</style>
+</head>
+<body>
+<div class="reveal">
+<div class="slides">
+
+<!-- Slide 1: Title -->
+<section>
+  <h1>Step 09</h1>
+  <h2>Public Client + Security Hardening</h2>
+  <p class="highlight">PKCE, allowlists, and audit logging</p>
+</section>
+
+<!-- Slide 2: Confidential vs Public Clients -->
+<section>
+  <h2>Confidential vs Public Clients</h2>
+  <table>
+    <thead>
+      <tr><th></th><th>Confidential (Step 08)</th><th>Public (Step 09)</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Client Secret</td><td>Required</td><td>Not used</td></tr>
+      <tr><td>PKCE</td><td>Optional</td><td>Required (automatic)</td></tr>
+      <tr><td>Platform</td><td>Web</td><td>Mobile / Desktop</td></tr>
+      <tr><td>Security</td><td>Secret proves identity</td><td>PKCE proves origin</td></tr>
+      <tr><td>Use case</td><td>Server-side apps</td><td>Desktop, CLI, SPA</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- Slide 3: When to use Public Clients -->
+<section>
+  <h2>When to Use Public Clients</h2>
+  <ul>
+    <li>Can't securely store a client secret (desktop apps, CLI tools)</li>
+    <li>Want to eliminate secret rotation overhead</li>
+    <li>PKCE provides sufficient security</li>
+    <li>Actually <span class="highlight">MORE secure</span> than confidential in some cases &mdash; no secret to leak!</li>
+  </ul>
+</section>
+
+<!-- Slide 4: PKCE: Proof Key for Code Exchange -->
+<section>
+  <h2>PKCE: Proof Key for Code Exchange</h2>
+  <pre><code class="language-text">1. Client generates random code_verifier
+2. Client computes code_challenge = SHA256(code_verifier)
+3. Auth request includes code_challenge
+4. Token exchange includes code_verifier
+5. Server verifies: SHA256(verifier) == challenge</code></pre>
+  <p>Prevents authorization code interception &mdash; attacker needs the verifier.</p>
+  <p class="small">FastMCP handles this automatically.</p>
+</section>
+
+<!-- Slide 5: Azure Portal Changes -->
+<section>
+  <h2>Azure Portal Changes</h2>
+  <p class="small">Changes from Step 08:</p>
+  <ul>
+    <li>Authentication &rarr; Allow public client flows &rarr; <strong>Yes</strong></li>
+    <li>Add platform: <span class="highlight">Mobile and desktop applications</span></li>
+    <li>Redirect URI: <code>http://localhost:8000/mcp/oauth/callback</code></li>
+    <li>Optionally remove client secret</li>
+  </ul>
+</section>
+
+<!-- Slide 6: User Allowlist -->
+<section>
+  <h2>User Allowlist</h2>
+  <p><em>Authorization after authentication</em></p>
+  <pre><code class="language-python">ALLOWED_USERS=alice@duke.edu,bob@duke.edu
+
+def check_user_allowed(email: str) -> bool:
+    allowed = config.allowed_users_list
+    if not allowed:
+        return True  # empty = allow all
+    return email.lower() in allowed</code></pre>
+  <p><span class="highlight">Authentication</span> = who are you?<br>
+     <span class="highlight">Authorization</span> = are you allowed?</p>
+</section>
+
+<!-- Slide 7: Audit Logging: Why? -->
+<section>
+  <h2>Audit Logging: Why?</h2>
+  <ul>
+    <li>Compliance requirements (FERPA, SOX, HIPAA)</li>
+    <li>Forensics: who queried what, when?</li>
+    <li>Tamper detection: were logs modified?</li>
+    <li>We need: <span class="highlight">append-only, verifiable, timestamped</span></li>
+  </ul>
+</section>
+
+<!-- Slide 8: Hash Chain Integrity -->
+<section>
+  <h2>Hash Chain Integrity</h2>
+  <pre><code class="language-text">Entry 1: {data, hash: SHA256(data), previous_hash: "GENESIS"}
+Entry 2: {data, hash: SHA256(data), previous_hash: entry1.hash}
+Entry 3: {data, hash: SHA256(data), previous_hash: entry2.hash}</code></pre>
+  <p>If <strong>ANY</strong> entry is modified or deleted, the chain breaks.</p>
+  <p><code>verify_chain()</code> detects tampering.</p>
+</section>
+
+<!-- Slide 9: Audit Logger -->
+<section>
+  <h2>Audit Logger</h2>
+  <pre><code class="language-python">class AuditLogger:
+    def log(self, user_email, action, detail="", result_count=0):
+        entry = {
+            "timestamp": datetime.now(UTC).isoformat(),
+            "user": user_email,
+            "action": action,    # QUERY, DENIED, NL_QUERY
+            "detail": detail[:500],
+            "previous_hash": self._previous_hash,
+        }
+        entry["hash"] = SHA256(entry)
+        # Append to JSONL file with fsync</code></pre>
+</section>
+
+<!-- Slide 10: Integrating Audit with Tools -->
+<section>
+  <h2>Integrating Audit with Tools</h2>
+  <pre><code class="language-python">@mcp.tool
+async def query_sql(sql: str, ctx: Context) -> str:
+    user_email = get_user_email()
+    if not check_user_allowed(user_email):
+        audit.log(user_email, "DENIED", sql[:200])
+        return {"error": "Access denied"}
+
+    rows, total = await db.execute_query(sql)
+    audit.log(user_email, "QUERY", sql[:200], result_count=total)
+    return results</code></pre>
+</section>
+
+<!-- Slide 11: Key Takeaways -->
+<section>
+  <h2>Key Takeaways</h2>
+  <ul>
+    <li><strong>Public clients + PKCE:</strong> no secret to manage or leak</li>
+    <li><strong>User allowlist:</strong> simple but effective authorization</li>
+    <li><strong>Audit logging with hash chain:</strong> tamper-detected, append-only</li>
+    <li><strong>Defense in depth:</strong> authentication + authorization + audit</li>
+  </ul>
+  <p class="small" style="margin-top: 0.5em;"><strong>Note:</strong> These security patterns (allowlist, audit) also apply to Duke OIDC (Step 08a)</p>
+  <p class="highlight" style="margin-top: 0.5em;">Next: OBO flow for downstream APIs &rarr;</p>
+</section>
+
+</div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reveal.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/plugin/highlight/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/plugin/notes/notes.min.js"></script>
+<script>
+Reveal.initialize({
+  hash: true,
+  plugins: [RevealHighlight, RevealNotes]
+});
+</script>
+</body>
+</html>
