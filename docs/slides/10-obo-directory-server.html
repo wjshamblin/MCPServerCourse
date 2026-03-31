@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Step 10: OBO Flow — Directory Server</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reset.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reveal.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/theme/night.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/plugin/highlight/monokai.min.css">
+<style>
+  .reveal { font-size: 32px; }
+  .reveal h1 { text-transform: none; font-size: 1.8em; }
+  .reveal h2 { text-transform: none; font-size: 1.4em; }
+  .reveal h3 { text-transform: none; font-size: 1.1em; }
+  .reveal pre { width: 100%; margin: 0.4em 0; }
+  .reveal pre code { max-height: 400px; font-size: 0.75em; line-height: 1.35; }
+  .reveal ul, .reveal ol { text-align: left; font-size: 0.9em; }
+  .reveal li { margin-bottom: 0.3em; }
+  .reveal p { font-size: 0.9em; }
+  .reveal .small { font-size: 0.65em; }
+  .reveal .highlight { color: #42affa; }
+  .reveal table { margin: 0 auto; font-size: 0.8em; }
+  .reveal table th, .reveal table td { padding: 0.2em 0.6em; border: 1px solid #444; }
+  .reveal table th { background: #333; }
+  .reveal .two-col { display: flex; gap: 2em; }
+  .reveal .two-col > * { flex: 1; }
+  .reveal .slides section { overflow: hidden; }
+</style>
+</head>
+<body>
+<div class="reveal">
+<div class="slides">
+
+<!-- Slide 1: Title -->
+<section>
+  <h1>Step 10</h1>
+  <h2>On-Behalf-Of Flow</h2>
+  <p class="highlight">Calling downstream APIs with user delegation</p>
+</section>
+
+<!-- Slide 2: The Problem -->
+<section>
+  <h2>The Problem</h2>
+  <ul>
+    <li>We want to look up people in the university directory</li>
+    <li>Microsoft Graph API has the data</li>
+    <li>But Graph requires its own token (different audience)</li>
+    <li>We can't reuse the user's MCP token for Graph calls</li>
+    <li><strong>Solution:</strong> exchange the MCP token for a Graph token</li>
+  </ul>
+</section>
+
+<!-- Slide 3: On-Behalf-Of Flow -->
+<section>
+  <h2>On-Behalf-Of Flow</h2>
+  <pre><code class="language-text">User authenticates → MCP token (api://app/access_as_user)
+                          ↓
+Directory Server receives MCP token
+                          ↓ OBO Exchange
+Azure AD returns Graph token (User.Read.All)
+                          ↓
+Server calls Graph API AS THE USER</code></pre>
+</section>
+
+<!-- Slide 4: Why OBO instead of Application Permissions? -->
+<section>
+  <h2>Why OBO?</h2>
+  <ul>
+    <li>Some orgs (like Duke) restrict application permissions</li>
+    <li>OBO uses <span class="highlight">DELEGATED</span> permissions &mdash; user context preserved</li>
+    <li>Audit trail: Graph logs show the actual user, not a service account</li>
+    <li>Principle of least privilege: users see only what they can access</li>
+  </ul>
+</section>
+
+<!-- Slide 5: Two App Registrations Required -->
+<section>
+  <h2>Two App Registrations Required</h2>
+  <ul>
+    <li><strong>App 1:</strong> Financial Server (from Step 08) &mdash; already exists</li>
+    <li><strong>App 2:</strong> Directory Server &mdash; <span class="highlight">NEW</span> registration</li>
+    <li>Each has its own client ID, secret, and scope</li>
+    <li>The directory app needs Graph permissions</li>
+  </ul>
+</section>
+
+<!-- Slide 6: Directory App Setup -->
+<section>
+  <h2>Directory App Setup</h2>
+  <ul>
+    <li>Register new app: "MCP Directory Server"</li>
+    <li>Expose an API: <code>access_as_user</code> scope</li>
+    <li>Add Graph permissions (<span class="highlight">DELEGATED</span>):
+      <ul>
+        <li><code>User.Read.All</code> &mdash; read all user profiles</li>
+        <li><code>Directory.Read.All</code> &mdash; read directory data</li>
+      </ul>
+    </li>
+    <li><strong>Admin consent required</strong> &mdash; these are org-wide permissions</li>
+  </ul>
+</section>
+
+<!-- Slide 7: The Token Exchange -->
+<section>
+  <h2>The Token Exchange</h2>
+  <pre><code class="language-python">POST https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token
+
+grant_type = urn:ietf:params:oauth:grant-type:jwt-bearer
+client_id = &lt;directory-app-id&gt;
+client_secret = &lt;directory-app-secret&gt;
+assertion = &lt;user's MCP token&gt;
+scope = User.Read.All Directory.Read.All
+requested_token_use = on_behalf_of</code></pre>
+</section>
+
+<!-- Slide 8: Token Caching -->
+<section>
+  <h2>Token Caching</h2>
+  <pre><code class="language-python">class OBOTokenCache:
+    # Thread-safe, TTL + LRU eviction
+    # Key: SHA256(user_token)[:32]
+    # Value: (graph_token, timestamp, expires_at)
+    # Max 500 entries, 50-min TTL</code></pre>
+  <p>Without caching: OBO exchange on <strong>EVERY</strong> Graph call.</p>
+  <p>With caching: once per session.</p>
+</section>
+
+<!-- Slide 9: Architecture -->
+<section>
+  <h2>Architecture</h2>
+  <pre><code class="language-text">directory_server.py   — MCP server + auth
+token_exchange.py     — OBO cache + exchange
+ms_graph_client.py    — Graph API wrapper
+directory_service.py  — Business logic
+models.py             — Pydantic models</code></pre>
+</section>
+
+<!-- Slide 10: Graph API Client -->
+<section>
+  <h2>Graph API Client</h2>
+  <pre><code class="language-python">class GraphClient:
+    async def find_user(self, token, query):
+        if "@" in query:
+            filter = f"mail eq '{query}'"
+        else:
+            filter = f"startswith(displayName, '{query}')"
+        return await self.get("/users", token,
+                              params={"$filter": filter})</code></pre>
+</section>
+
+<!-- Slide 11: PII Sanitization in Logs -->
+<section>
+  <h2>PII Sanitization in Logs</h2>
+  <pre><code class="language-python">def sanitize_for_log(value: str) -> str:
+    if "@" in value:
+        return f"{value[:2]}***@{value.split('@')[1]}"
+    return f"{value[:3]}***"
+
+# "alice@duke.edu" → "al***@duke.edu"</code></pre>
+  <p>Never log full PII &mdash; always sanitize.</p>
+</section>
+
+<!-- Slide 12: Server Composition -->
+<section>
+  <h2>Server Composition</h2>
+  <pre><code class="language-python">main = FastMCP("UniversityServices")
+main.mount(financial_mcp, namespace="finance")
+main.mount(directory_mcp, namespace="directory")
+
+# finance_query_sql, finance_ask
+# directory_find_user, directory_get_user_groups</code></pre>
+  <p>Everything under one endpoint!</p>
+</section>
+
+<!-- Slide 13: Configuration with env_prefix -->
+<section>
+  <h2>Configuration with env_prefix</h2>
+  <pre><code class="language-python">class DirectorySettings(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="DIR_")
+    azure_client_id: str = Field(...)</code></pre>
+  <ul>
+    <li>Financial server uses: <code>AZURE_CLIENT_ID</code></li>
+    <li>Directory server uses: <code>DIR_AZURE_CLIENT_ID</code></li>
+    <li>No collisions in the same <code>.env</code> file</li>
+  </ul>
+</section>
+
+<!-- Slide 14: Course Recap -->
+<section>
+  <h2>Course Recap</h2>
+  <table class="small">
+    <thead>
+      <tr><th>Step</th><th>What you learned</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>01</td><td>Tools and HTTP transport</td></tr>
+      <tr><td>02</td><td>Resources and Prompts</td></tr>
+      <tr><td>03</td><td>Context, logging, elicitation</td></tr>
+      <tr><td>04</td><td>Building domain datasets</td></tr>
+      <tr><td>05</td><td>Database-backed servers</td></tr>
+      <tr><td>06</td><td>NL2SQL with LLM integration</td></tr>
+      <tr><td>07</td><td>Lifespans, tasks, composition</td></tr>
+      <tr><td>08</td><td>Azure OAuth (confidential)</td></tr>
+      <tr><td>08a</td><td>Duke OIDC (alternative auth path)</td></tr>
+      <tr><td>09</td><td>Public clients, PKCE, audit</td></tr>
+      <tr><td>10</td><td>OBO flow, downstream APIs</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- Slide 15: What's Next? -->
+<section>
+  <h2>What's Next?</h2>
+  <ul>
+    <li>Deploy to production (HTTPS, proper secrets management)</li>
+    <li>Add more Graph capabilities (calendar, files, mail)</li>
+    <li>Build more MCP servers for your use cases</li>
+  </ul>
+  <p style="margin-top: 1em;">Resources:</p>
+  <ul>
+    <li><a href="https://gofastmcp.com">https://gofastmcp.com</a></li>
+    <li><a href="https://spec.modelcontextprotocol.io">MCP Specification</a></li>
+  </ul>
+</section>
+
+</div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reveal.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/plugin/highlight/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/plugin/notes/notes.min.js"></script>
+<script>
+Reveal.initialize({
+  hash: true,
+  plugins: [RevealHighlight, RevealNotes]
+});
+</script>
+</body>
+</html>
