@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Step 05: Financial Query Server</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reset.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reveal.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/theme/night.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/plugin/highlight/monokai.min.css">
+<style>
+  .reveal { font-size: 32px; }
+  .reveal h1 { text-transform: none; font-size: 1.8em; }
+  .reveal h2 { text-transform: none; font-size: 1.4em; }
+  .reveal h3 { text-transform: none; font-size: 1.1em; }
+  .reveal pre { width: 100%; margin: 0.4em 0; }
+  .reveal pre code { max-height: 400px; font-size: 0.75em; line-height: 1.35; }
+  .reveal ul, .reveal ol { text-align: left; font-size: 0.9em; }
+  .reveal li { margin-bottom: 0.3em; }
+  .reveal p { font-size: 0.9em; }
+  .reveal .small { font-size: 0.65em; }
+  .reveal .highlight { color: #42affa; }
+  .reveal table { margin: 0 auto; font-size: 0.8em; }
+  .reveal table th, .reveal table td { padding: 0.2em 0.6em; border: 1px solid #444; }
+  .reveal table th { background: #333; }
+  .reveal .two-col { display: flex; gap: 2em; }
+  .reveal .two-col > * { flex: 1; }
+  .reveal .slides section { overflow: hidden; }
+</style>
+</head>
+<body>
+<div class="reveal">
+<div class="slides">
+
+<!-- Slide 1: Title -->
+<section>
+  <h1>Step 05</h1>
+  <h2>Financial Query Server</h2>
+  <p>A real database-backed MCP server</p>
+</section>
+
+<!-- Slide 2: Architecture -->
+<section>
+  <h2>Architecture</h2>
+  <pre><code class="language-text">MCP Client
+    ↕ HTTP
+financial_server.py  ← Tools + Resources
+    ↕
+database.py          ← SQL Safety Layer
+    ↕
+SQLite (500K rows)</code></pre>
+  <p class="small">Plus: <code>config.py</code> for Pydantic settings</p>
+</section>
+
+<!-- Slide 3: The config pattern -->
+<section>
+  <h2>The Config Pattern</h2>
+  <pre><code class="language-python">from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env")
+
+    database_path: str = Field(
+        default="data/university_gl.db"
+    )
+    max_rows: int = Field(default=2000)
+    warning_rows: int = Field(default=100)
+    log_level: str = Field(default="INFO")</code></pre>
+  <ul class="small">
+    <li>Environment variables override defaults</li>
+    <li><code>.env</code> file for local development</li>
+    <li>Type validation built in</li>
+  </ul>
+</section>
+
+<!-- Slide 4: SQL Safety: The Problem -->
+<section>
+  <h2>SQL Safety: The Problem</h2>
+  <ul>
+    <li>LLMs generate SQL. LLMs <span class="highlight">hallucinate</span>.</li>
+    <li>An LLM could generate: <code>DROP TABLE gl_transactions</code></li>
+    <li>Even without malice, bad SQL can crash the server</li>
+    <li>We need a safety layer</li>
+  </ul>
+</section>
+
+<!-- Slide 5: SQL Safety: The Solution -->
+<section>
+  <h2>SQL Safety: The Solution</h2>
+  <pre><code class="language-python">DANGEROUS_PATTERNS = [
+    re.compile(r"\b(DROP|DELETE|INSERT|UPDATE|ALTER|"
+               r"CREATE|TRUNCATE|REPLACE)\b", re.IGNORECASE),
+    re.compile(r"\b(ATTACH|DETACH)\b", re.IGNORECASE),
+    re.compile(r"--"),  re.compile(r"/\*"),  # comments
+]
+
+def validate_sql(sql: str) -> None:
+    stripped = sql.strip().rstrip(";")
+    if not stripped.upper().startswith("SELECT"):
+        raise SQLValidationError("Only SELECT allowed.")
+    for p in DANGEROUS_PATTERNS:
+        if p.search(stripped): raise SQLValidationError(...)</code></pre>
+</section>
+
+<!-- Slide 6: Tool: query_sql -->
+<section>
+  <h2>Tool: query_sql</h2>
+  <pre><code class="language-python">@mcp.tool
+async def query_sql(sql: str, ctx: Context) -> str:
+    try:
+        rows, total = await execute_query(
+            config.database_path_resolved,
+            sql, max_rows=config.max_rows)
+    except SQLValidationError as e:
+        return f"Query validation error: {e}"
+    if total > config.warning_rows:
+        await ctx.warning(f"Query returned {total:,} rows")
+    return json.dumps({"total_rows": total,
+        "returned_rows": len(rows), "data": rows})</code></pre>
+</section>
+
+<!-- Slide 7: Tool: get_database_info -->
+<section>
+  <h2>Tool: get_database_info</h2>
+  <pre><code class="language-python">@mcp.tool
+async def get_database_info(ctx: Context) -> str:
+    """Get a summary of all tables, their columns,
+    and row counts. Call this first to understand the
+    database structure before writing queries."""
+    tables = await get_table_info(
+        config.database_path_resolved
+    )
+    await ctx.info(f"Found {len(tables)} tables")
+    return json.dumps(tables, indent=2)</code></pre>
+  <p class="small">Returns table names, column details, row counts &mdash; the LLM calls this first to understand the schema</p>
+</section>
+
+<!-- Slide 8: Schema Resources -->
+<section>
+  <h2>Schema Resources</h2>
+  <pre><code class="language-python">@mcp.resource("schema://tables",
+              mime_type="application/json")
+async def list_tables() -> str:
+    """List all tables with row counts."""
+
+@mcp.resource("schema://{table_name}/columns",
+              mime_type="application/json")
+async def table_columns(table_name: str) -> str:
+    """Column details for any table."""</code></pre>
+  <ul>
+    <li><code>schema://tables</code> &rarr; list of tables with row counts</li>
+    <li><code>schema://{table_name}/columns</code> &rarr; column details for any table</li>
+    <li>Resources give the LLM structural knowledge <em>before</em> querying</li>
+  </ul>
+</section>
+
+<!-- Slide 9: Domain Resources -->
+<section>
+  <h2>Domain Resources &mdash; the secret sauce</h2>
+  <ul>
+    <li><code>domain://funds</code> &rarr; explains fund accounting</li>
+    <li><code>domain://accounts</code> &rarr; chart of accounts reference</li>
+    <li><code>domain://departments</code> &rarr; department listing by school</li>
+  </ul>
+  <p style="margin-top: 1em;">Without these, the LLM has <span class="highlight">NO IDEA</span> what fund codes mean</p>
+</section>
+
+<!-- Slide 10: Why domain resources matter -->
+<section>
+  <h2>Why Domain Resources Matter</h2>
+  <div class="two-col">
+    <div>
+      <h3>Without</h3>
+      <p>LLM sees: <code>fund_code = '20'</code></p>
+      <p>&rarr; meaningless number</p>
+    </div>
+    <div>
+      <h3>With domain://funds</h3>
+      <p>"Fund 20 = Restricted Grants (NSF, NIH)"</p>
+      <p>&rarr; <span class="highlight">understands the data</span></p>
+    </div>
+  </div>
+  <p style="margin-top: 1em;">Domain resources bridge the gap between <em>schema</em> and <em>meaning</em></p>
+  <p>This is what makes NL2SQL actually work</p>
+</section>
+
+<!-- Slide 11: Running it -->
+<section>
+  <h2>Running It</h2>
+  <pre><code class="language-bash"># Generate data first (step 04)
+python generate_data.py
+
+# Configure
+cp .env.example .env
+
+# Start
+python financial_server.py</code></pre>
+</section>
+
+<!-- Slide 12: Key Takeaways -->
+<section>
+  <h2>Key Takeaways</h2>
+  <ul>
+    <li><span class="highlight">Pydantic Settings</span> for configuration</li>
+    <li>SQL validation layer prevents dangerous queries</li>
+    <li>Schema resources for <em>structure</em>, domain resources for <em>meaning</em></li>
+    <li>Row limits prevent context window overflow</li>
+    <li>Context logging keeps the client informed</li>
+  </ul>
+  <p style="margin-top: 1em;">Next: Natural language queries &rarr;</p>
+</section>
+
+</div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reveal.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/plugin/highlight/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/plugin/notes/notes.min.js"></script>
+<script>
+Reveal.initialize({
+  hash: true,
+  plugins: [RevealHighlight, RevealNotes]
+});
+</script>
+</body>
+</html>

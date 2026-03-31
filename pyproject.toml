@@ -1,0 +1,16 @@
+[project]
+name = "mcp-server-course"
+version = "0.1.0"
+description = "MCP Server Course - Building MCP Servers with FastMCP"
+requires-python = ">=3.11"
+dependencies = [
+    "fastmcp>=2.14.0",
+    "uvicorn>=0.34.0",
+    "faker>=33.0.0",
+    "aiosqlite>=0.20.0",
+    "pydantic-settings>=2.10.0",
+    "python-dotenv>=1.0.0",
+]
+
+[tool.uv]
+dev-dependencies = []
