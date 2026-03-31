@@ -187,11 +187,11 @@ async def delete_records(table: str, confirm: bool = False, ctx: Context = None)
     if not confirm:
         try:
             result = await ctx.elicit(
-                message=f"Are you sure you want to delete all records from '{table}'? This cannot be undone.",
-                response_type=bool,
+                message=f"Delete all records from '{table}'? This cannot be undone.",
+                response_type=["Confirm delete", "Cancel"],
             )
 
-            if result.action != "accept" or not result.data:
+            if result.action != "accept" or result.data != "Confirm delete":
                 await ctx.info("Delete cancelled by user")
                 return "Operation cancelled."
         except Exception:
