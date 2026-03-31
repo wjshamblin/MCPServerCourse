@@ -1,10 +1,12 @@
 """
-Step 07: Lifespans, Tasks, and Composition
+Step 08: Azure OAuth (Confidential Client)
 
 Adds:
 - Lifespan for database connection management
 - Background task for long-running report generation
 - Server composition with mount()
+- Azure AD OAuth authentication (OAuthProxy, JWTVerifier)
+- get_authenticated_user tool
 """
 
 import csv
@@ -14,6 +16,9 @@ import logging
 
 from fastmcp import FastMCP, Context
 from fastmcp.server.lifespan import lifespan
+from fastmcp.server.auth import OAuthProxy
+from fastmcp.server.auth.providers.jwt import JWTVerifier
+from fastmcp.server.dependencies import get_access_token
 from fastmcp.prompts import Message
 
 from config import load_config
@@ -43,6 +48,27 @@ async def db_lifespan(server):
         await db.close()
 
 
+# === Auth Setup ===
+
+auth = None
+if config.auth_enabled:
+    tenant = config.azure_tenant_id
+    token_verifier = JWTVerifier(
+        jwks_uri=f"https://login.microsoftonline.com/{tenant}/discovery/v2.0/keys",
+        issuer=f"https://login.microsoftonline.com/{tenant}/v2.0",
+        audience=config.azure_client_id,
+    )
+    auth = OAuthProxy(
+        upstream_authorization_endpoint=f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize",
+        upstream_token_endpoint=f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token",
+        upstream_client_id=config.azure_client_id,
+        upstream_client_secret=config.azure_client_secret,
+        upstream_scopes=[config.full_mcp_scope] + config.additional_auth_scopes_list,
+        token_verifier=token_verifier,
+        base_url=config.oauth_base_url,
+    )
+    logger.info("Azure OAuth enabled")
+
 mcp = FastMCP(
     "FinancialData",
     instructions=(
@@ -51,6 +77,7 @@ mcp = FastMCP(
         "accounting concepts. Use query_sql or ask to query the data."
     ),
     lifespan=db_lifespan,
+    auth=auth,
 )
 
 
@@ -158,6 +185,25 @@ async def export_report(
         "total_rows": total,
         "exported_rows": len(rows),
         "csv": csv_content,
+    })
+
+
+@mcp.tool
+async def get_authenticated_user() -> str:
+    """Get information about the currently authenticated user.
+
+    Returns the user's claims from their Azure AD token.
+    """
+    token = get_access_token()
+    if token is None:
+        return json.dumps({"error": "Not authenticated"})
+
+    claims = token.claims or {}
+    return json.dumps({
+        "email": claims.get("preferred_username", "unknown"),
+        "name": claims.get("name", "unknown"),
+        "tenant_id": claims.get("tid", "unknown"),
+        "token_issuer": claims.get("iss", "unknown"),
     })
 
 

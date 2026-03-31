@@ -23,6 +23,17 @@ class Settings(BaseSettings):
     warning_rows: int = Field(default=100, description="Row count that triggers a warning")
     log_level: str = Field(default="INFO")
 
+    # Azure OAuth Settings
+    azure_client_id: str = Field(default="", description="Azure AD Application (Client) ID")
+    azure_client_secret: str = Field(default="", description="Azure AD Client Secret")
+    azure_tenant_id: str = Field(default="", description="Azure AD Tenant ID")
+    mcp_api_scope: str = Field(default="access_as_user", description="Custom API scope name")
+    oauth_base_url: str = Field(default="http://localhost:8000", description="OAuth callback base URL")
+    additional_auth_scopes: str = Field(
+        default="email,openid,profile,offline_access",
+        description="Comma-separated additional OAuth scopes",
+    )
+
     # LLM Configuration (for NL-to-SQL)
     anthropic_api_key: str = Field(default="", description="Anthropic API key for NL-to-SQL")
     anthropic_model: str = Field(default="claude-sonnet-4-5", description="Anthropic model")
@@ -38,6 +49,18 @@ class Settings(BaseSettings):
     def get_log_level(self) -> int:
         levels = {"DEBUG": logging.DEBUG, "INFO": logging.INFO, "WARNING": logging.WARNING, "ERROR": logging.ERROR}
         return levels.get(self.log_level.upper(), logging.INFO)
+
+    @property
+    def full_mcp_scope(self) -> str:
+        return f"api://{self.azure_client_id}/{self.mcp_api_scope}"
+
+    @property
+    def additional_auth_scopes_list(self) -> list[str]:
+        return [s.strip() for s in self.additional_auth_scopes.split(",") if s.strip()]
+
+    @property
+    def auth_enabled(self) -> bool:
+        return bool(self.azure_client_id and self.azure_tenant_id)
 
 
 def load_config() -> Settings:

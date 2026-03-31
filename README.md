@@ -428,3 +428,27 @@ When mounted with a namespace, all tools, resources, and prompts from the child 
 | `financial_server.py` | Refactored server with lifespan and background task |
 | `composed_server.py` | Composition demo — mounts the financial server under a namespace |
 | `database.py` | Added `DatabasePool` class for persistent connections |
+
+---
+
+## Step 08: Azure OAuth — Confidential Client
+
+Adds Azure AD authentication to the financial server.
+
+### What changes
+
+- Server now requires Azure AD authentication (when configured)
+- New `get_authenticated_user` tool returns user claims from the token
+- `OAuthProxy` bridges Azure AD's OAuth flow with MCP's client protocol
+
+### Setup
+
+See `docs/azure-setup-step08.md` for the full Azure Portal walkthrough.
+
+### Key concepts
+
+- **Confidential client** — server has a client secret, proving its identity
+- **OAuthProxy** — bridges traditional OAuth providers (Azure, Google) with MCP's Dynamic Client Registration
+- **Custom scope** — `api://<client-id>/access_as_user` scopes the token to your API
+- **JWTVerifier** — validates tokens using Azure AD's published signing keys (JWKS)
+- **get_access_token()** — access the authenticated user's token in any tool
