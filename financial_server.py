@@ -48,7 +48,7 @@ class IntrospectionTokenVerifier(TokenVerifier):
         self.introspection_endpoint = introspection_endpoint
         self.client_id = client_id
         self.client_secret = client_secret
-        self.required_scopes: list[str] = []
+        self.required_scopes: list[str] = ["openid", "email", "profile", "offline_access"]
 
     async def verify_token(self, token: str) -> AccessToken | None:
         """Verify a token by calling the introspection endpoint."""
