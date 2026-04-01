@@ -84,7 +84,12 @@ class IntrospectionTokenVerifier(TokenVerifier):
             }
 
             scopes = data.get("scope", "").split() if data.get("scope") else []
-            return AccessToken(token=token, claims=claims, scopes=scopes)
+            return AccessToken(
+                token=token,
+                client_id=data.get("client_id", "unknown"),
+                scopes=scopes,
+                claims=claims,
+            )
 
 
 # === Lifespan ===
