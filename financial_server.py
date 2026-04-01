@@ -125,6 +125,7 @@ if duke_config.oidc_enabled:
     client_storage = FernetEncryptionWrapper(
         DiskStore(directory=storage_path),
         source_material=duke_config.oidc_client_secret,
+        salt="mcp-server-course",
     )
 
     auth = OIDCProxy(
