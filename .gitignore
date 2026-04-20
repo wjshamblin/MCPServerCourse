@@ -5,7 +5,8 @@ docs/.DS_Store
 __pycache__/
 *.pyc
 *.pyo
-.env
+.env*
+!.env.example
 *.db
 data/
 .venv/
