@@ -1,5 +1,5 @@
 """
-Step 08: Azure OAuth (Confidential Client)
+Step 08: Financial Server with Azure OAuth (Confidential Client)
 
 Adds:
 - Lifespan for database connection management

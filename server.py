@@ -1,5 +1,5 @@
 """
-Server Composition Demo
+Step 08: Composed Server with Azure OAuth (Confidential Client)
 
 Demonstrates mounting multiple FastMCP servers into a single endpoint.
 The financial server is mounted with a namespace prefix.
