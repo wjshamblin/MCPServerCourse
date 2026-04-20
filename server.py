@@ -1,5 +1,5 @@
 """
-Server Composition Demo
+Step 06: Server Composition (Lifespans, Tasks, Mount)
 
 Demonstrates mounting multiple FastMCP servers into a single endpoint.
 The financial server is mounted with a namespace prefix.

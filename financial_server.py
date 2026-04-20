@@ -1,5 +1,5 @@
 """
-Step 07: Lifespans, Tasks, and Composition
+Step 06: Financial Server with Lifespan and Background Tasks
 
 Adds:
 - Lifespan for database connection management
