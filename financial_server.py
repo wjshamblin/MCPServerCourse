@@ -1,5 +1,5 @@
 """
-Step 08a: Duke OIDC Authentication
+Step 07: Financial Server with Duke OIDC
 
 Adds:
 - Duke OIDC authentication via OIDCProxy
