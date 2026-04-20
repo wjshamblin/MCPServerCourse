@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Step 07: Duke OIDC Authentication</title>
+<title>Step 07: Minimal Duke OIDC Auth Demo</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reset.min.css">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reveal.min.css">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/theme/night.min.css">
@@ -35,87 +35,92 @@
 <!-- Slide 1: Title -->
 <section>
   <h1>Step 07</h1>
-  <h2>Duke OIDC Authentication</h2>
-  <p>Securing your MCP server with Duke's identity provider</p>
+  <h2>Minimal Duke OIDC Auth Demo</h2>
+  <p>A fresh, auth-only restart</p>
 </section>
 
-<!-- Slide 2: Duke OIDC vs Azure AD -->
+<!-- Slide 2: Why "fresh" -->
 <section>
-  <h2>Duke OIDC vs Azure AD</h2>
-  <table class="small">
-    <tr><th></th><th>Duke OIDC</th><th>Azure AD</th></tr>
-    <tr><td>Provider</td><td>Duke OIT</td><td>Microsoft</td></tr>
-    <tr><td>Registration</td><td>authentication.oit.duke.edu</td><td>portal.azure.com</td></tr>
-    <tr><td>Login UI</td><td>Duke Shibboleth</td><td>Microsoft login</td></tr>
-    <tr><td>User identity</td><td>NetID, DukeID</td><td>UPN, Object ID</td></tr>
-    <tr><td>Introspection</td><td>Required</td><td>Not needed</td></tr>
-  </table>
+  <h2>Why This Branch Restarts</h2>
+  <ul>
+    <li>Auth is a big new idea &mdash; don't mix it with data, SQL, lifespans, NL-to-SQL, or composition</li>
+    <li>Steps 07 &ndash; 09 each isolate <em>one</em> auth flavor on top of a hello-world shape</li>
+    <li>When it's time to combine auth with real business logic, steps 10 and 11 return to richer servers</li>
+    <li>Everything you need this step is in one file: <code>server.py</code></li>
+  </ul>
 </section>
 
-<!-- Slide 3: OIDC in 60 seconds -->
+<!-- Slide 3: What's in the branch -->
+<section>
+  <h2>What's in This Branch</h2>
+  <pre><code class="language-text" data-trim data-noescape>
+.
+├── server.py        # the entire demo
+├── .env.example     # 5 env vars
+├── pyproject.toml   # fastmcp, uvicorn, httpx, python-dotenv
+└── README.md
+  </code></pre>
+  <p class="small">Four deps. No database, no audit, no composition.</p>
+</section>
+
+<!-- Slide 4: OIDC in 60 seconds -->
 <section>
   <h2>OIDC in 60 Seconds</h2>
   <ul>
     <li>OpenID Connect = identity layer on top of OAuth 2.0</li>
-    <li>Uses a discovery URL (<code>.well-known/openid-configuration</code>)</li>
-    <li>Standard endpoints: authorize, token, userinfo, introspect</li>
+    <li>Provider advertises everything at a <em>discovery URL</em>:
+      <code class="small">.well-known/openid-configuration</code></li>
+    <li>Standard endpoints: <code>authorize</code>, <code>token</code>, <code>userinfo</code>, <code>introspect</code></li>
     <li>Duke's discovery:<br>
       <code class="small">https://oauth.oit.duke.edu/oidc/.well-known/openid-configuration</code></li>
   </ul>
 </section>
 
-<!-- Slide 4: Registering a Duke OAuth Application -->
+<!-- Slide 5: Register a Duke OAuth App -->
 <section>
   <h2>Register a Duke OAuth App</h2>
   <ul>
-    <li>Register at <code>authentication.oit.duke.edu</code></li>
+    <li>Register at <code>authentication.oit.duke.edu/manager/oauth/register</code></li>
     <li>Prerequisite: ServiceNow support group</li>
-    <li>Redirect URI: <code>http://localhost:8000/auth/callback</code></li>
+    <li>Redirect URI: <code>http://localhost:8000/callback</code><br>
+      <span class="small">(must match <code>SERVER_BASE_URL + /callback</code>)</span></li>
     <li>Scopes: openid, email, profile, offline_access</li>
-    <li>Enable Introspection: <strong>Yes</strong> (required!)</li>
+    <li>Enable Introspection: <strong>Yes</strong> &mdash; required below</li>
   </ul>
 </section>
 
-<!-- Slide 5: Duke OIDC Scopes -->
+<!-- Slide 6: The whole server, part 1 -->
 <section>
-  <h2>Duke OIDC Scopes</h2>
-  <table>
-    <tr><th>Scope</th><th>What you get</th></tr>
-    <tr><td><code>openid</code></td><td>sub (NetID@duke.edu), dukeNetID, dukeUniqueID</td></tr>
-    <tr><td><code>profile</code></td><td>name, given_name, family_name, dukePrimaryAffiliation</td></tr>
-    <tr><td><code>email</code></td><td>email address</td></tr>
-    <tr><td><code>groups</code></td><td>Duke Group Manager memberships</td></tr>
-    <tr><td><code>offline_access</code></td><td>Refresh tokens (long sessions)</td></tr>
-  </table>
-</section>
-
-<!-- Slide 6: FastMCP OIDCProxy -->
-<section>
-  <h2>FastMCP OIDCProxy</h2>
+  <h2>The Whole Server &mdash; Setup</h2>
   <pre><code class="python" data-trim data-noescape>
+import os, httpx, logging
+from dotenv import load_dotenv
+from fastmcp import FastMCP
+from fastmcp.server.auth import AccessToken, TokenVerifier
 from fastmcp.server.auth.oidc_proxy import OIDCProxy
+from fastmcp.server.dependencies import get_access_token
 
-auth = OIDCProxy(
-    config_url="https://oauth.oit.duke.edu/oidc/"
-               ".well-known/openid-configuration",
-    client_id=settings.oidc_client_id,
-    client_secret=settings.oidc_client_secret,
-    base_url="http://localhost:8000",
-    token_verifier=token_verifier,
-    client_storage=client_storage,
-)
-mcp = FastMCP("Server", auth=auth)
+load_dotenv()
+
+OIDC_WELL_KNOWN_URL = os.environ["OIDC_WELL_KNOWN_URL"]
+OIDC_CLIENT_ID      = os.environ["OIDC_CLIENT_ID"]
+OIDC_CLIENT_SECRET  = os.environ["OIDC_CLIENT_SECRET"]
+OIDC_SCOPES         = os.environ.get("OIDC_SCOPES",
+                        "openid email profile offline_access")
+SERVER_BASE_URL     = os.environ.get("SERVER_BASE_URL",
+                        "http://localhost:8000")
   </code></pre>
+  <p class="small">Env-driven. No pydantic-settings, no Settings class.</p>
 </section>
 
-<!-- Slide 7: The Introspection Problem -->
+<!-- Slide 7: The introspection problem -->
 <section>
   <h2>The Introspection Problem</h2>
   <ul>
-    <li>Duke OIDC tokens <strong>DON'T</strong> include scope claims in JWT</li>
-    <li>Standard JWT validation can't verify scopes</li>
-    <li>Solution: call Duke's introspection endpoint (RFC 7662)</li>
-    <li>Server sends token &rarr; Duke returns metadata + scopes</li>
+    <li>Duke OIDC tokens are <strong>opaque</strong> &mdash; not self-describing JWTs</li>
+    <li>The stock <code>JWTVerifier</code> can't read scopes out of them</li>
+    <li>RFC 7662 introspection: POST the token back to Duke's <code>/introspect</code> and trust the response</li>
+    <li>Same pattern applies to any OIDC provider that issues opaque tokens</li>
   </ul>
 </section>
 
@@ -124,83 +129,138 @@ mcp = FastMCP("Server", auth=auth)
   <h2>IntrospectionTokenVerifier</h2>
   <pre><code class="python" data-trim data-noescape>
 class IntrospectionTokenVerifier(TokenVerifier):
+    def __init__(self, introspection_endpoint, client_id, client_secret):
+        self.introspection_endpoint = introspection_endpoint
+        self.client_id = client_id
+        self.client_secret = client_secret
+        self.required_scopes = OIDC_SCOPES.split()
+
     async def verify_token(self, token: str) -> AccessToken | None:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                self.introspection_endpoint,
+        async with httpx.AsyncClient() as c:
+            resp = await c.post(self.introspection_endpoint,
                 data={"token": token},
                 auth=(self.client_id, self.client_secret))
-            data = response.json()
-            if not data.get("active"):
-                return None
-            return AccessToken(token=token, claims=claims, scopes=scopes)
+        if resp.status_code != 200 or not resp.json().get("active"):
+            return None
+        data = resp.json()
+        return AccessToken(
+            token=token,
+            client_id=data.get("client_id", "unknown"),
+            scopes=(data.get("scope") or "").split(),
+            claims={k: data.get(k) for k in (
+                "sub","email","name","dukeNetID","dukeUniqueID",
+                "dukePrimaryAffiliation") if data.get(k)},
+        )
   </code></pre>
 </section>
 
-<!-- Slide 9: Persistent Token Storage -->
+<!-- Slide 9: Wiring the OIDCProxy -->
 <section>
-  <h2>Persistent Token Storage</h2>
+  <h2>Wiring the OIDCProxy</h2>
   <pre><code class="python" data-trim data-noescape>
-from key_value.aio.stores.disk import DiskStore
-from key_value.aio.wrappers.encryption.fernet import FernetEncryptionWrapper
+_metadata = httpx.get(OIDC_WELL_KNOWN_URL).json()
 
-client_storage = FernetEncryptionWrapper(
-    DiskStore(directory="./data/token_storage"),
-    source_material=settings.oidc_client_secret,
+auth = OIDCProxy(
+    config_url=OIDC_WELL_KNOWN_URL,
+    client_id=OIDC_CLIENT_ID,
+    client_secret=OIDC_CLIENT_SECRET,
+    base_url=SERVER_BASE_URL,
+    token_verifier=IntrospectionTokenVerifier(
+        introspection_endpoint=_metadata["introspection_endpoint"],
+        client_id=OIDC_CLIENT_ID,
+        client_secret=OIDC_CLIENT_SECRET,
+    ),
+    extra_authorize_params={"scope": OIDC_SCOPES},
 )
+
+mcp = FastMCP("DukeOIDCDemo", auth=auth)
   </code></pre>
-  <ul>
-    <li>Encrypted on disk using Fernet</li>
-    <li>Sessions survive server restarts</li>
-    <li>Client secret used as encryption key material</li>
-  </ul>
+  <p class="small">The <code>auth=auth</code> on the <em>top-level</em> FastMCP is what publishes the well-known endpoints.</p>
 </section>
 
-<!-- Slide 10: Accessing the authenticated user -->
+<!-- Slide 10: Tools & resources -->
 <section>
-  <h2>Authenticated User</h2>
+  <h2>Tools &amp; Resources</h2>
   <pre><code class="python" data-trim data-noescape>
 @mcp.tool
-async def get_authenticated_user() -> str:
-    token = get_access_token()
-    claims = token.claims or {}
-    return json.dumps({
-        "netid": claims.get("dukeNetID"),
-        "email": claims.get("email"),
-        "affiliation": claims.get("dukePrimaryAffiliation"),
-    })
+def hello(name: str = "world") -> str:
+    return f"hello, {name}!"
+
+@mcp.tool
+def whoami() -> dict:
+    tok = get_access_token()
+    if tok is None:
+        return {"error": "no access token in context"}
+    return {
+        "client_id": tok.client_id,
+        "scopes": tok.scopes,
+        "claims": tok.claims,
+    }
+
+@mcp.resource("user://me")
+def me() -> dict:
+    return whoami()
   </code></pre>
+  <p class="small"><code>hello</code> is the "your auth is working" smoke test. <code>whoami</code> is the meaningful identity check.</p>
 </section>
 
-<!-- Slide 11: Authentication Flow -->
+<!-- Slide 11: Endpoints you get for free -->
 <section>
-  <h2>Authentication Flow</h2>
-  <pre class="small" style="text-align: center; box-shadow: none;">
-MCP Client &rarr; FastMCP Server &rarr; Duke Shibboleth Login
-                                      &darr;
-              User authenticates with NetID/password
-                                      &darr;
-              Duke redirects with authorization code
-                                      &darr;
-              FastMCP exchanges code for tokens
-                                      &darr;
-              IntrospectionTokenVerifier validates
-                                      &darr;
-              User identity available in tools
+  <h2>Endpoints You Get For Free</h2>
+  <table>
+    <tr><th>Path</th><th>Purpose</th></tr>
+    <tr><td><code>/mcp</code></td><td>MCP endpoint (auth required)</td></tr>
+    <tr><td><code>/.well-known/oauth-authorization-server</code></td><td>OAuth metadata</td></tr>
+    <tr><td><code>/.well-known/oauth-protected-resource</code></td><td>Resource server metadata</td></tr>
+    <tr><td><code>/authorize</code>, <code>/token</code></td><td>OAuth proxy endpoints</td></tr>
+    <tr><td><code>/register</code></td><td>Dynamic Client Registration</td></tr>
+    <tr><td><code>/callback</code></td><td>OIDC redirect URI</td></tr>
+  </table>
+  <p class="small">If any well-known returns 404, <code>auth=auth</code> isn't on the instance you're running.</p>
+</section>
+
+<!-- Slide 12: Auth Flow -->
+<section>
+  <h2>Auth Flow</h2>
+  <pre class="small" style="text-align: left; box-shadow: none;">
+MCP Client                 FastMCP                  Duke OIDC
+    │                         │                        │
+    │── tools/list ──────────&gt;│                        │
+    │&lt;─── 401 + metadata ─────│                        │
+    │── /register (DCR) ─────&gt;│                        │
+    │── /authorize ──────────&gt;│── 302 ────────────────&gt;│
+    │                         │&lt;── code (via Shib) ────│
+    │── /callback (code) ────&gt;│── exchange at /token ─&gt;│
+    │                         │&lt;── access_token ───────│
+    │── tools/call + bearer ─&gt;│── /introspect ────────&gt;│
+    │                         │&lt;── claims + scopes ────│
+    │&lt;──── result ────────────│                        │
   </pre>
 </section>
 
-<!-- Slide 12: Key Takeaways -->
+<!-- Slide 13: Run it -->
+<section>
+  <h2>Run It</h2>
+  <pre><code class="language-bash" data-trim data-noescape>
+cp .env.example .env
+# fill in OIDC_CLIENT_ID and OIDC_CLIENT_SECRET
+uv sync
+python server.py
+  </code></pre>
+  <p>Connect from Claude Desktop / Cursor / <code>mcp inspect</code>. First call triggers the browser redirect to Duke Shibboleth; after login, every tool call sees the user's identity via <code>get_access_token()</code>.</p>
+</section>
+
+<!-- Slide 14: Key Takeaways -->
 <section>
   <h2>Key Takeaways</h2>
   <ul>
-    <li>Duke OIDC uses <code>OIDCProxy</code> (not <code>OAuthProxy</code>)</li>
+    <li>Duke OIDC uses <code>OIDCProxy</code>, not <code>OAuthProxy</code></li>
     <li>Discovery URL auto-configures all endpoints</li>
-    <li>Introspection needed because Duke JWTs lack scope claims</li>
-    <li>Register at authentication.oit.duke.edu (self-service)</li>
-    <li>Encrypted disk storage for persistent sessions</li>
+    <li>Opaque tokens &rArr; introspection, not JWT validation</li>
+    <li><strong>auth must be on the top-level FastMCP</strong> &mdash; it's what publishes the well-known endpoints</li>
+    <li>Four deps, one file, one new idea</li>
   </ul>
-  <p class="small" style="margin-top: 0.5em;"><strong>Alternative path:</strong> See Steps 08&ndash;10 for Azure AD auth, public clients, PKCE, and OBO flow</p>
+  <p class="small" style="margin-top: 0.5em;">Next: step 08 swaps Duke &rarr; Azure AD (confidential client).</p>
 </section>
 
 </div>
@@ -209,10 +269,7 @@ MCP Client &rarr; FastMCP Server &rarr; Duke Shibboleth Login
 <script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/plugin/highlight/highlight.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/plugin/notes/notes.min.js"></script>
 <script>
-Reveal.initialize({
-  hash: true,
-  plugins: [RevealHighlight, RevealNotes]
-});
+Reveal.initialize({ hash: true, plugins: [RevealHighlight, RevealNotes] });
 </script>
 </body>
 </html>
