@@ -455,17 +455,50 @@ See `docs/azure-setup-step08.md` for the full Azure Portal walkthrough.
 
 ---
 
-## Step 09: Azure Public Client + Security
+## Step 09: Azure Public Client + Security (Minimal Demo)
+
+Like steps 07 and 08, this branch is a **fresh, minimal** demo focused on
+the new ideas: a public-client OAuth flow plus two production-leaning
+security add-ons.
 
 ### Public vs Confidential
 
-- **Confidential** (step-08): Server has a client secret. More traditional.
-- **Public** (step-09): No client secret. Uses PKCE instead. Simpler, and more secure for many scenarios.
+- **Confidential** (step 08): Server holds a client secret. Suits server-only
+  deployments where the secret can be safely stored.
+- **Public** (step 09): No client secret. Uses PKCE instead — the client
+  proves it started the flow by presenting a hash preimage on token
+  exchange. Ideal for desktop apps, CLIs, and anywhere you can't trust
+  the client to safeguard a secret.
 
-### Security additions
+### What you get
 
-- **User allowlist**: Only specified email addresses can use the server
-- **Audit logging**: Every query is logged with a SHA-256 hash chain for tamper detection
-- **PKCE**: Automatic with FastMCP — prevents authorization code interception
+`server.py` + `audit.py` are the only Python files. Tools/resources:
 
-See `docs/azure-setup-step09.md` for Azure Portal changes.
+| Surface | Purpose |
+|---|---|
+| `hello(name)` | Trivial gated greeting |
+| `whoami()` | Identity claims for the caller |
+| `privileged_action(message)` | Allowlist-gated tool with audit on every call (allowed *or* denied) |
+| `user://me` | Identity claims as a resource |
+| `audit://verify` | Verifies the integrity of the current month's audit log |
+
+### Security concepts demonstrated
+
+- **PKCE** — automatic via `forward_pkce=True` (FastMCP default)
+- **User allowlist** — `ALLOWED_USERS` env var; `check_user_allowed()` gate
+- **Hash-chained audit log** — every `privileged_action` call is appended
+  to a JSONL file where each entry includes the SHA-256 of the previous
+  entry. `audit.verify_chain()` detects any later tamper.
+
+### Setup
+
+1. Reuse your Azure app registration from step 08, but under
+   **Authentication** add a "Mobile and desktop applications" platform
+   and toggle **Allow public client flows**. Redirect URI:
+   `http://localhost:8000/callback`.
+2. Copy `.env.example` to `.env` and fill in `AZURE_TENANT_ID` and
+   `AZURE_CLIENT_ID`. (No client secret required.)
+3. Optionally set `ALLOWED_USERS=alice@example.com,bob@example.com`.
+4. `uv sync && python server.py`
+
+See `docs/azure-setup-step09.md` for Portal changes.
