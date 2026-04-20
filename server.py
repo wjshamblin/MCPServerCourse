@@ -59,6 +59,7 @@ from dotenv import load_dotenv
 from fastmcp import FastMCP
 from fastmcp.server.auth.providers.azure import AzureProvider, EntraOBOToken
 from fastmcp.server.dependencies import get_access_token
+from fastmcp.utilities.auth import decode_jwt_payload
 
 from ms_graph_client import GraphClient
 from directory_service import DirectoryService
@@ -207,6 +208,40 @@ async def whoami() -> dict:
         "client_id": tok.client_id,
         "scopes": tok.scopes,
         "claims": {k: tok.claims.get(k) for k in interesting if tok.claims.get(k) is not None},
+    }
+
+
+@mcp.tool
+async def whoami_obo(
+    graph_token: str = EntraOBOToken(GRAPH_SCOPES),
+) -> dict:
+    """Compare the inbound user token vs. the OBO-exchanged Graph token.
+
+    Useful for *seeing* OBO happen: `aud` should flip from this API's
+    client_id to Microsoft Graph, and `scp` should flip from
+    `access_as_user` to the Graph scopes requested — while `oid`, `tid`,
+    and `upn` stay pinned to the same user.
+    """
+    tok = get_access_token()
+    if tok is None:
+        return {"error": "no access token in context"}
+
+    keep = (
+        "oid", "tid", "upn", "preferred_username", "name",
+        "aud", "iss", "scp", "appid", "azp",
+    )
+
+    mcp_claims = {k: tok.claims.get(k) for k in keep if tok.claims.get(k) is not None}
+
+    try:
+        graph_payload = decode_jwt_payload(graph_token)
+        graph_claims = {k: graph_payload.get(k) for k in keep if graph_payload.get(k) is not None}
+    except Exception as e:
+        graph_claims = {"error": f"could not decode graph token: {e}"}
+
+    return {
+        "mcp_token_claims": mcp_claims,
+        "graph_token_claims": graph_claims,
     }
 
 
