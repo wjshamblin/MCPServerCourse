@@ -431,23 +431,43 @@ When mounted with a namespace, all tools, resources, and prompts from the child 
 
 ---
 
-## Step 07: Duke OIDC Authentication
+## Step 07: Duke OIDC Authentication (Minimal Demo)
 
-An alternative to Azure AD — authenticate using Duke University's OIDC provider.
+This branch is a **fresh, minimal** auth-focused demo — the financial server,
+database, NL-to-SQL, lifespans, and background tasks from earlier steps are
+intentionally stripped away so the OIDC mechanics are the only thing on the
+page. (The auth-only branches 07–09 each restart from a hello-world shape so
+you can see one auth flavor at a time without other moving parts.)
 
-### Duke OIDC vs Azure AD
+### What you get
 
-- **Duke OIDC**: Duke's own identity provider at `oauth.oit.duke.edu`. Uses Shibboleth login. Self-service registration.
-- **Azure AD**: Microsoft's identity platform. Separate app registration. Required for Graph API access.
+`server.py` is the only Python file. It exposes:
 
-### Key differences from Azure OAuth
+| Surface | Purpose |
+|---|---|
+| `hello(name)` tool | Trivial greeting — gated by auth like everything else |
+| `whoami()` tool | Returns the authenticated user's identity claims |
+| `user://me` resource | Same identity claims, exposed as a resource |
+| `/.well-known/oauth-authorization-server` | OAuth metadata advertised by FastMCP |
+| `/.well-known/oauth-protected-resource` | Resource server metadata |
+| `/authorize`, `/token`, `/register`, `/callback` | OAuth proxy endpoints |
 
-- Uses `OIDCProxy` instead of `OAuthProxy`
-- Discovery URL auto-configures endpoints (no manual endpoint URLs)
-- Requires custom `IntrospectionTokenVerifier` because Duke JWTs don't include scope claims
-- Registration at https://authentication.oit.duke.edu (not Azure Portal)
-- User claims include Duke-specific fields: `dukeNetID`, `dukeUniqueID`, `dukePrimaryAffiliation`
+### Key concepts demonstrated
+
+- Wiring an `OIDCProxy` onto a `FastMCP` instance via `auth=...`
+- A custom `IntrospectionTokenVerifier`: Duke's access tokens are opaque and
+  don't carry scopes inside a JWT, so we POST the token to the provider's
+  `/introspect` endpoint to learn its scopes and identity claims. This pattern
+  applies to any OIDC provider that issues opaque tokens.
+- Reading the caller's identity inside a tool with `get_access_token()`
 
 ### Setup
+
+1. Register an OAuth client at <https://authentication.oit.duke.edu/manager/oauth/register>.
+   Set the redirect URI to `http://localhost:8000/callback` (or your `SERVER_BASE_URL` + `/callback`).
+2. Copy `.env.example` to `.env` and fill in `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET`.
+3. `uv sync && python server.py`
+4. Connect from Claude Desktop / Cursor / `mcp inspect` — you'll be redirected
+   to Duke for login on the first call.
 
 See `docs/duke-oidc-setup.md` for the full registration walkthrough.

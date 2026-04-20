@@ -4,18 +4,10 @@ version = "0.1.0"
 description = "MCP Server Course - Building MCP Servers with FastMCP"
 requires-python = ">=3.11"
 dependencies = [
-    "fastmcp[tasks]>=2.14.0",
+    "fastmcp>=2.14.0",
     "uvicorn>=0.34.0",
-    "faker>=33.0.0",
-    "aiosqlite>=0.20.0",
-    "pydantic-settings>=2.10.0",
-    "python-dotenv>=1.0.0",
-    "anthropic>=0.40.0",
-    "openai>=1.0.0",
-    "cryptography>=44.0.0",
     "httpx>=0.28.0",
-    "diskcache>=5.6.0",
-    "pathvalidate>=3.0.0",
+    "python-dotenv>=1.0.0",
 ]
 
 [dependency-groups]
