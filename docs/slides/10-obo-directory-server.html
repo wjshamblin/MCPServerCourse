@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Step 10: OBO Flow — Directory Server</title>
+<title>Step 10: Directory Server with Azure OBO</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reset.min.css">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reveal.min.css">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/theme/night.min.css">
@@ -35,193 +35,243 @@
 <!-- Slide 1: Title -->
 <section>
   <h1>Step 10</h1>
-  <h2>OBO Flow — Directory Server</h2>
-  <p class="highlight">Calling downstream APIs with user delegation</p>
+  <h2>Directory Server with On-Behalf-Of</h2>
+  <p>Reaching Microsoft Graph as the calling user</p>
 </section>
 
-<!-- Slide 2: The Problem -->
+<!-- Slide 2: Why this branch grows -->
 <section>
-  <h2>The Problem</h2>
+  <h2>Why This Branch Grows</h2>
   <ul>
-    <li>We want to look up people in the university directory</li>
-    <li>Microsoft Graph API has the data</li>
-    <li>But Graph requires its own token (different audience)</li>
-    <li>We can't reuse the user's MCP token for Graph calls</li>
-    <li><strong>Solution:</strong> exchange the MCP token for a Graph token</li>
+    <li>Steps 07 &ndash; 09 were intentionally tiny (one file, one idea)</li>
+    <li>Step 10 keeps the same auth shape but now does something substantive: <strong>call Microsoft Graph on the user's behalf</strong></li>
+    <li>That needs real code, so <code>server.py</code> pulls in four supporting modules</li>
+    <li>All composition-with-financial-server framing is gone &mdash; <code>server.py</code> <em>is</em> the directory server</li>
   </ul>
 </section>
 
-<!-- Slide 3: On-Behalf-Of Flow -->
+<!-- Slide 3: The problem OBO solves -->
 <section>
-  <h2>On-Behalf-Of Flow</h2>
-  <pre><code class="language-text">User authenticates → MCP token (api://app/access_as_user)
-                          ↓
-Directory Server receives MCP token
-                          ↓ OBO Exchange
-Azure AD returns Graph token (User.Read.All)
-                          ↓
-Server calls Graph API AS THE USER</code></pre>
-</section>
-
-<!-- Slide 4: Why OBO instead of Application Permissions? -->
-<section>
-  <h2>Why OBO?</h2>
+  <h2>The Problem OBO Solves</h2>
+  <p>The user's MCP token is scoped for <em>our</em> API:</p>
+  <pre class="small" style="text-align: left; box-shadow: none;">aud = api://&lt;our client id&gt;/access_as_user</pre>
+  <p>Graph won't accept that token &mdash; it wants its own audience:</p>
+  <pre class="small" style="text-align: left; box-shadow: none;">aud = https://graph.microsoft.com</pre>
   <ul>
-    <li>Some orgs (like Duke) restrict application permissions</li>
-    <li>OBO uses <span class="highlight">DELEGATED</span> permissions &mdash; user context preserved</li>
-    <li>Audit trail: Graph logs show the actual user, not a service account</li>
-    <li>Principle of least privilege: users see only what they can access</li>
+    <li>App-only creds would work, but then every user gets the union of Graph permissions our app was granted</li>
+    <li>OBO exchanges the user's MCP token for a Graph token <em>with the user's identity preserved</em></li>
   </ul>
 </section>
 
-<!-- Slide 5: Two App Registrations Required -->
+<!-- Slide 4: OBO flow -->
 <section>
-  <h2>Two App Registrations Required</h2>
+  <h2>OBO Flow</h2>
+  <pre class="small" style="text-align: left; box-shadow: none;">
+User → MCP client → Our server
+                      │
+                      │ POST /token (jwt-bearer grant)
+                      │   assertion = user's MCP token
+                      │   scope     = Graph scopes
+                      │   client_id + client_secret (confidential!)
+                      ▼
+                   Azure AD
+                      │
+                      │ New access_token (aud=graph.microsoft.com)
+                      │ preserves oid/upn of user
+                      ▼
+                   Our server ──────── GET /users?...  ──────▶ Graph
+                                                               │
+                                       ◀────── user results ───┘
+  </pre>
+  <p class="small">Grant type: <code>urn:ietf:params:oauth:grant-type:jwt-bearer</code> + <code>requested_token_use=on_behalf_of</code>.</p>
+</section>
+
+<!-- Slide 5: Why confidential client again -->
+<section>
+  <h2>Why Confidential Again?</h2>
   <ul>
-    <li><strong>App 1:</strong> Financial Server (from Step 08) &mdash; already exists</li>
-    <li><strong>App 2:</strong> Directory Server &mdash; <span class="highlight">NEW</span> registration</li>
-    <li>Each has its own client ID, secret, and scope</li>
-    <li>The directory app needs Graph permissions</li>
+    <li>OBO <strong>requires</strong> the downstream call to <code>/token</code> be authenticated</li>
+    <li>Public clients can't do that &mdash; they have no secret</li>
+    <li>So step 10 backs off to a confidential client (secret in the server's env)</li>
+    <li>Step 09's security add-ons (allowlist, audit) still apply in principle; this branch keeps focus on OBO, so they're not re-added here</li>
   </ul>
 </section>
 
-<!-- Slide 6: Directory App Setup -->
+<!-- Slide 6: Repo shape -->
 <section>
-  <h2>Directory App Setup</h2>
-  <ul>
-    <li>Register new app: "MCP Directory Server"</li>
-    <li>Expose an API: <code>access_as_user</code> scope</li>
-    <li>Add Graph permissions (<span class="highlight">DELEGATED</span>):
+  <h2>Files on This Branch</h2>
+  <pre><code class="language-text" data-trim data-noescape>
+server.py             # auth + OBO wiring + MCP tools
+token_exchange.py     # OBOTokenExchange (POST + TTL cache)
+ms_graph_client.py    # thin httpx wrapper around Graph
+directory_service.py  # business logic tying OBO + Graph
+models.py             # pydantic UserResult
+.env.example
+pyproject.toml        # + pydantic
+  </code></pre>
+  <p class="small">First branch in the course where <code>server.py</code> imports its own helpers.</p>
+</section>
+
+<!-- Slide 7: Azure app setup -->
+<section>
+  <h2>Azure App Setup</h2>
+  <ol>
+    <li>App registration as in step 08 (Web platform, client secret)</li>
+    <li><strong>API permissions</strong> &rarr; Microsoft Graph &rarr; Delegated:
       <ul>
-        <li><code>User.Read.All</code> &mdash; read all user profiles</li>
-        <li><code>Directory.Read.All</code> &mdash; read directory data</li>
+        <li><code>User.Read.All</code></li>
+        <li><code>Directory.Read.All</code></li>
       </ul>
     </li>
-    <li><strong>Admin consent required</strong> &mdash; these are org-wide permissions</li>
-  </ul>
+    <li>Tenant admin consent on those scopes</li>
+    <li><strong>Expose an API</strong> &rarr; keep <code>access_as_user</code> from step 08</li>
+  </ol>
 </section>
 
-<!-- Slide 7: The Token Exchange -->
+<!-- Slide 8: Env vars -->
 <section>
-  <h2>The Token Exchange</h2>
-  <pre><code class="language-python">POST https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token
+  <h2>Env Vars</h2>
+  <pre><code class="language-bash" data-trim data-noescape>
+AZURE_TENANT_ID=&lt;tenant&gt;
+AZURE_CLIENT_ID=&lt;client id&gt;
+AZURE_CLIENT_SECRET=&lt;secret value&gt;        # confidential again
+AZURE_API_SCOPE=access_as_user
+SERVER_BASE_URL=http://localhost:8000
 
-grant_type = urn:ietf:params:oauth:grant-type:jwt-bearer
-client_id = &lt;directory-app-id&gt;
-client_secret = &lt;directory-app-secret&gt;
-assertion = &lt;user's MCP token&gt;
-scope = User.Read.All Directory.Read.All
-requested_token_use = on_behalf_of</code></pre>
+GRAPH_SCOPES="https://graph.microsoft.com/User.Read.All \
+              https://graph.microsoft.com/Directory.Read.All"
+GRAPH_BASE_URL=https://graph.microsoft.com/beta
+
+OBO_TOKEN_CACHE_TTL=3000
+  </code></pre>
 </section>
 
-<!-- Slide 8: Token Caching -->
+<!-- Slide 9: Auth + OBO wiring -->
 <section>
-  <h2>Token Caching</h2>
-  <pre><code class="language-python">class OBOTokenCache:
-    # Thread-safe, TTL + LRU eviction
-    # Key: SHA256(user_token)[:32]
-    # Value: (graph_token, timestamp, expires_at)
-    # Max 500 entries, 50-min TTL</code></pre>
-  <p>Without caching: OBO exchange on <strong>EVERY</strong> Graph call.</p>
-  <p>With caching: once per session.</p>
+  <h2>Auth + OBO Wiring</h2>
+  <pre><code class="python" data-trim data-noescape>
+token_verifier = JWTVerifier(
+    jwks_uri=f".../{TENANT}/discovery/v2.0/keys",
+    issuer  =f".../{TENANT}/v2.0",
+    audience=CLIENT_ID,
+)
+
+auth = OAuthProxy(
+    upstream_authorization_endpoint=f".../authorize",
+    upstream_token_endpoint         =f".../token",
+    upstream_client_id              =CLIENT_ID,
+    upstream_client_secret          =CLIENT_SECRET,
+    valid_scopes                    =_all_scopes,
+    extra_authorize_params          ={"scope": " ".join(_all_scopes)},
+    token_verifier                  =token_verifier,
+    base_url                        =SERVER_BASE_URL,
+)
+
+obo       = OBOTokenExchange(TENANT, CLIENT_ID, CLIENT_SECRET,
+                             GRAPH_SCOPES, OBO_TOKEN_CACHE_TTL)
+graph     = GraphClient(GRAPH_BASE_URL)
+directory = DirectoryService(obo, graph)
+  </code></pre>
 </section>
 
-<!-- Slide 9: Architecture -->
+<!-- Slide 10: OBOTokenExchange -->
 <section>
-  <h2>Architecture</h2>
-  <pre><code class="language-text">directory_server.py   — MCP server + auth
-token_exchange.py     — OBO cache + exchange
-ms_graph_client.py    — Graph API wrapper
-directory_service.py  — Business logic
-models.py             — Pydantic models</code></pre>
+  <h2>OBOTokenExchange</h2>
+  <pre><code class="python" data-trim data-noescape>
+class OBOTokenExchange:
+    async def exchange(self, user_token: str) -> str:
+        # Return cached exchange if still fresh
+        cached = self._cache.get(user_token)
+        if cached and cached.expires_at &gt; time.time():
+            return cached.access_token
+
+        data = {
+          "client_id":            self.client_id,
+          "client_secret":        self.client_secret,
+          "assertion":            user_token,
+          "scope":                self.scopes,
+          "requested_token_use":  "on_behalf_of",
+          "grant_type":           "urn:ietf:params:oauth:grant-type:jwt-bearer",
+        }
+        r = await self._http.post(self.token_endpoint, data=data)
+        if r.status_code != 200:
+            raise OBOExchangeError(r.text)
+        body = r.json()
+        self._cache[user_token] = _CacheEntry(
+            access_token=body["access_token"],
+            expires_at=time.time() + min(body["expires_in"], self.ttl))
+        return body["access_token"]
+  </code></pre>
+  <p class="small">TTL cache avoids hammering Azure on every tool call.</p>
 </section>
 
-<!-- Slide 10: Graph API Client -->
+<!-- Slide 11: DirectoryService -->
 <section>
-  <h2>Graph API Client</h2>
-  <pre><code class="language-python">class GraphClient:
-    async def find_user(self, token, query):
-        if "@" in query:
-            filter = f"mail eq '{query}'"
-        else:
-            filter = f"startswith(displayName, '{query}')"
-        return await self.get("/users", token,
-                              params={"$filter": filter})</code></pre>
+  <h2>DirectoryService</h2>
+  <pre><code class="python" data-trim data-noescape>
+class DirectoryService:
+    async def find_user(self, user_token: str, query: str):
+        graph_token = await self.obo.exchange(user_token)
+        return await self.graph.search_users(graph_token, query)
+
+    async def get_user_groups(self, user_token: str, user_id: str):
+        graph_token = await self.obo.exchange(user_token)
+        return await self.graph.list_member_of(graph_token, user_id)
+  </code></pre>
+  <p class="small">Tools stay thin; OBO + Graph never leak into the MCP surface.</p>
 </section>
 
-<!-- Slide 11: PII Sanitization in Logs -->
+<!-- Slide 12: MCP tools -->
 <section>
-  <h2>PII Sanitization in Logs</h2>
-  <pre><code class="language-python">def sanitize_for_log(value: str) -> str:
-    if "@" in value:
-        return f"{value[:2]}***@{value.split('@')[1]}"
-    return f"{value[:3]}***"
+  <h2>MCP Tools &amp; Resource</h2>
+  <pre><code class="python" data-trim data-noescape>
+@mcp.tool
+async def find_user(query: str) -> str:
+    tok = get_access_token()
+    if not tok: return json.dumps({"error": "Not authenticated"})
+    try:
+        results = await directory.find_user(tok.token, query)
+    except OBOExchangeError as e:
+        return json.dumps({"error": f"OBO exchange failed: {e}"})
+    users = [UserResult.from_graph(r).model_dump() for r in results]
+    return json.dumps({"query": query, "count": len(users),
+                       "results": users}, indent=2)
 
-# "alice@duke.edu" → "al***@duke.edu"</code></pre>
-  <p>Never log full PII &mdash; always sanitize.</p>
+@mcp.tool
+async def get_user_groups(user_id: str) -> str: ...
+
+@mcp.tool
+async def whoami() -> dict: ...
+
+@mcp.resource("directory://auth/user",
+              mime_type="application/json")
+async def auth_user_resource() -> str: ...
+  </code></pre>
 </section>
 
-<!-- Slide 12: Server Composition -->
+<!-- Slide 13: Failure modes -->
 <section>
-  <h2>Server Composition</h2>
-  <pre><code class="language-python">main = FastMCP("UniversityServices")
-main.mount(financial_mcp, namespace="finance")
-main.mount(directory_mcp, namespace="directory")
-
-# finance_query_sql, finance_ask
-# directory_find_user, directory_get_user_groups</code></pre>
-  <p>Everything under one endpoint!</p>
-</section>
-
-<!-- Slide 13: Configuration with env_prefix -->
-<section>
-  <h2>Configuration with env_prefix</h2>
-  <pre><code class="language-python">class DirectorySettings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="DIR_")
-    azure_client_id: str = Field(...)</code></pre>
-  <ul>
-    <li>Financial server uses: <code>AZURE_CLIENT_ID</code></li>
-    <li>Directory server uses: <code>DIR_AZURE_CLIENT_ID</code></li>
-    <li>No collisions in the same <code>.env</code> file</li>
-  </ul>
-</section>
-
-<!-- Slide 14: Course Recap -->
-<section>
-  <h2>Course Recap</h2>
+  <h2>Failure Modes Worth Knowing</h2>
   <table class="small">
-    <thead>
-      <tr><th>Step</th><th>What you learned</th></tr>
-    </thead>
-    <tbody>
-      <tr><td>01</td><td>Tools and HTTP transport</td></tr>
-      <tr><td>02</td><td>Resources and Prompts</td></tr>
-      <tr><td>03</td><td>Context, logging, elicitation</td></tr>
-      <tr><td>04</td><td>Dataset generation, database-backed servers</td></tr>
-      <tr><td>05</td><td>NL2SQL with LLM integration</td></tr>
-      <tr><td>06</td><td>Lifespans, tasks, composition</td></tr>
-      <tr><td>07</td><td>Duke OIDC authentication</td></tr>
-      <tr><td>08</td><td>Azure OAuth (confidential)</td></tr>
-      <tr><td>09</td><td>Public clients, PKCE, audit</td></tr>
-      <tr><td>10</td><td>OBO flow, downstream APIs</td></tr>
-      <tr><td>11</td><td>MCP Apps</td></tr>
-    </tbody>
+    <tr><th>Symptom</th><th>Likely cause</th></tr>
+    <tr><td><code>AADSTS65001</code> on exchange</td><td>Delegated Graph scopes not consented for this tenant</td></tr>
+    <tr><td><code>AADSTS50013</code></td><td>User token <code>aud</code> isn't <code>api://CLIENT_ID</code></td></tr>
+    <tr><td>OBO exchange works, Graph 403</td><td>Missing Graph permission (e.g. <code>Directory.Read.All</code>)</td></tr>
+    <tr><td>OBO slow on every call</td><td>Cache TTL too low, or <code>offline_access</code> missing</td></tr>
   </table>
 </section>
 
-<!-- Slide 15: What's Next? -->
+<!-- Slide 14: Key takeaways -->
 <section>
-  <h2>What's Next?</h2>
+  <h2>Key Takeaways</h2>
   <ul>
-    <li>Deploy to production (HTTPS, proper secrets management)</li>
-    <li>Add more Graph capabilities (calendar, files, mail)</li>
-    <li>Build more MCP servers for your use cases</li>
+    <li>OBO lets a server call downstream APIs <em>as the user</em>, not as the app</li>
+    <li>Requires a confidential client &mdash; the secret is part of the exchange</li>
+    <li>The tool surface stays tiny; the work lives in <code>OBOTokenExchange</code> + <code>GraphClient</code> + <code>DirectoryService</code></li>
+    <li>Cache exchanged tokens &mdash; don't re-exchange on every call</li>
+    <li>Preserves audit, least-privilege, and user identity across the network hop</li>
   </ul>
-  <p style="margin-top: 1em;">Resources:</p>
-  <ul>
-    <li><a href="https://gofastmcp.com">https://gofastmcp.com</a></li>
-    <li><a href="https://spec.modelcontextprotocol.io">MCP Specification</a></li>
-  </ul>
+  <p class="small" style="margin-top: 0.5em;">Next: step 11 leaves auth behind and introduces interactive UIs via MCP Apps.</p>
 </section>
 
 </div>
@@ -230,10 +280,7 @@ main.mount(directory_mcp, namespace="directory")
 <script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/plugin/highlight/highlight.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/plugin/notes/notes.min.js"></script>
 <script>
-Reveal.initialize({
-  hash: true,
-  plugins: [RevealHighlight, RevealNotes]
-});
+Reveal.initialize({ hash: true, plugins: [RevealHighlight, RevealNotes] });
 </script>
 </body>
 </html>
