@@ -1,5 +1,5 @@
 """
-Step 05: Financial Query MCP Server
+Step 05: NL2SQL — Natural Language to SQL
 
 A database-backed MCP server for querying university general ledger data.
 Provides SQL query execution with safety checks, schema resources, and
