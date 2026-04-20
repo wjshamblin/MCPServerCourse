@@ -1,5 +1,5 @@
 """
-Composed University Services Server
+Step 10: Composed Server — Finance + Directory (OBO)
 
 Mounts both the financial and directory servers under one endpoint.
 """

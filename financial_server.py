@@ -1,5 +1,5 @@
 """
-Step 09: Azure Public Client + Security
+Step 10: Financial Server (Azure Public Client Auth)
 
 Adds:
 - Lifespan for database connection management
