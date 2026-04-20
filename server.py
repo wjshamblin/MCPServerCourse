@@ -1,5 +1,5 @@
 """
-Server Composition Demo
+Step 09: Composed Server with Azure Public Client + Security
 
 Demonstrates mounting multiple FastMCP servers into a single endpoint.
 The financial server is mounted with a namespace prefix.
