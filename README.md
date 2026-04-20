@@ -431,24 +431,49 @@ When mounted with a namespace, all tools, resources, and prompts from the child 
 
 ---
 
-## Step 08: Azure OAuth — Confidential Client
+## Step 08: Azure OAuth — Confidential Client (Minimal Demo)
 
-Adds Azure AD authentication to the financial server.
+Like step 07, this branch is a **fresh, minimal** auth-focused demo. Earlier
+financial / database / NL-to-SQL machinery is intentionally absent so the
+Azure OAuth wiring is the only thing on the page.
 
-### What changes
+### What you get
 
-- Server now requires Azure AD authentication (when configured)
-- New `get_authenticated_user` tool returns user claims from the token
-- `OAuthProxy` bridges Azure AD's OAuth flow with MCP's client protocol
+`server.py` is the only Python file. It exposes:
+
+| Surface | Purpose |
+|---|---|
+| `hello(name)` tool | Trivial greeting — gated by auth like everything else |
+| `whoami()` tool | Returns the authenticated user's identity claims |
+| `user://me` resource | Same identity claims, exposed as a resource |
+| `/.well-known/oauth-authorization-server` | OAuth metadata advertised by FastMCP |
+| `/.well-known/oauth-protected-resource` | Resource server metadata |
+| `/authorize`, `/token`, `/register`, `/callback` | OAuth proxy endpoints |
+
+### Key concepts demonstrated
+
+- **Confidential client** — the server holds a client secret and exchanges
+  the auth code on the user's behalf
+- **OAuthProxy** — bridges traditional OAuth providers (Azure, Google) with
+  MCP's Dynamic Client Registration so MCP clients don't need their own
+  Azure app registration
+- **Custom API scope** — `api://<client-id>/access_as_user` scopes the
+  token specifically to your MCP server
+- **JWTVerifier** — Azure issues JWT access tokens; we validate them
+  locally against the tenant's published JWKS (no per-call introspection
+  needed, unlike Duke OIDC in step 07)
+- **`get_access_token()`** — read the caller's identity inside any tool
 
 ### Setup
 
-See `docs/azure-setup-step08.md` for the full Azure Portal walkthrough.
+1. Register an app in Azure Portal → App registrations → New registration.
+   Choose "Web" platform and set the redirect URI to
+   `http://localhost:8000/callback`.
+2. Under **Certificates & secrets** create a new client secret and copy
+   the secret *value* (not the secret ID).
+3. Under **Expose an API**, accept the default Application ID URI
+   (`api://<client_id>`) and add a scope named `access_as_user`.
+4. Copy `.env.example` to `.env` and fill in the three Azure values.
+5. `uv sync && python server.py`
 
-### Key concepts
-
-- **Confidential client** — server has a client secret, proving its identity
-- **OAuthProxy** — bridges traditional OAuth providers (Azure, Google) with MCP's Dynamic Client Registration
-- **Custom scope** — `api://<client-id>/access_as_user` scopes the token to your API
-- **JWTVerifier** — validates tokens using Azure AD's published signing keys (JWKS)
-- **get_access_token()** — access the authenticated user's token in any tool
+See `docs/azure-setup-step08.md` for the full Portal walkthrough.
