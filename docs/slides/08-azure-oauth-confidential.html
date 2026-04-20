@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Step 08: Azure OAuth — Confidential Client</title>
+<title>Step 08: Minimal Azure OAuth Demo (Confidential Client)</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reset.min.css">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reveal.min.css">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/theme/night.min.css">
@@ -35,221 +35,213 @@
 <!-- Slide 1: Title -->
 <section>
   <h1>Step 08</h1>
-  <h2>Azure OAuth — Confidential Client</h2>
-  <p>Securing your MCP server with Azure AD</p>
+  <h2>Azure AD OAuth &mdash; Confidential Client</h2>
+  <p>Same shape as step 07, different identity provider</p>
 </section>
 
-<!-- Slide 2: Why authenticate? -->
+<!-- Slide 2: Same shape as step 07 -->
 <section>
-  <h2>Why Authenticate?</h2>
+  <h2>Same Shape as Step 07</h2>
   <ul>
-    <li>Our financial server has <strong>sensitive data</strong></li>
-    <li>Without auth, anyone on the network can query it</li>
-    <li>We need:
-      <ul>
-        <li><span class="highlight">Identity</span> &mdash; who is this?</li>
-        <li><span class="highlight">Authorization</span> &mdash; are they allowed?</li>
-      </ul>
-    </li>
-    <li>Azure AD / Entra ID is the enterprise standard</li>
+    <li>Still a fresh, minimal, auth-only demo on top of a hello-world</li>
+    <li>Still three surfaces: <code>hello</code>, <code>whoami</code>, <code>user://me</code></li>
+    <li>Only thing that changes: the auth backend</li>
+    <li>Same four deps: <code>fastmcp</code>, <code>uvicorn</code>, <code>httpx</code>, <code>python-dotenv</code></li>
   </ul>
+  <p class="small">This branch swaps <code>OIDCProxy</code> (Duke) for <code>OAuthProxy</code> (Azure) and introspection for JWT.</p>
 </section>
 
-<!-- Slide 3: OAuth 2.0 in 60 seconds -->
+<!-- Slide 3: Duke vs Azure -->
 <section>
-  <h2>OAuth 2.0 in 60 Seconds</h2>
-  <pre><code class="text" data-trim>
-User ──"Login with Azure"──> Azure AD login page
-Azure AD ──auth code──> Your server
-Your server ──code + secret──> Azure AD
-Azure AD ──access token──> Your server
-Your server ──JWT──> MCP client
-  </code></pre>
-</section>
-
-<!-- Slide 4: What is a Confidential Client? -->
-<section>
-  <h2>What is a Confidential Client?</h2>
-  <ul>
-    <li>Has a <strong>client secret</strong> stored securely on the server</li>
-    <li>Secret proves the <em>server's</em> identity to Azure AD</li>
-    <li>Appropriate when: server is in a trusted environment</li>
-    <li>The server authenticates <em>itself</em>, not just the user</li>
-  </ul>
-  <br><br>
-  <p class="small">vs. Public Client (Step 09): no secret, used for desktop/mobile apps</p>
-</section>
-
-<!-- Slide 5: Azure App Registration Overview -->
-<section>
-  <h2>App Registration</h2>
-  <table>
-    <tr><th>Item</th><th>Purpose</th></tr>
-    <tr><td><span class="highlight">Application (Client) ID</span></td><td>Identifies your app</td></tr>
-    <tr><td><span class="highlight">Directory (Tenant) ID</span></td><td>Identifies your Azure AD org</td></tr>
-    <tr><td><span class="highlight">Client Secret</span></td><td>Proves your server's identity</td></tr>
-    <tr><td><span class="highlight">Custom Scope</span></td><td><code>api://&lt;client-id&gt;/access_as_user</code></td></tr>
-    <tr><td><span class="highlight">Redirect URI</span></td><td>Where Azure sends the user back</td></tr>
+  <h2>Duke OIDC vs Azure AD</h2>
+  <table class="small">
+    <tr><th></th><th>Duke (step 07)</th><th>Azure (step 08)</th></tr>
+    <tr><td>Proxy class</td><td><code>OIDCProxy</code></td><td><code>OAuthProxy</code></td></tr>
+    <tr><td>Discovery</td><td>Single <code>config_url</code></td><td>Explicit <code>upstream_*</code> URLs</td></tr>
+    <tr><td>Token format</td><td>Opaque</td><td>JWT</td></tr>
+    <tr><td>Verification</td><td>Remote introspection</td><td>Local JWKS</td></tr>
+    <tr><td>Claims</td><td><code>dukeNetID</code>, <code>email</code>, ...</td><td><code>oid</code>, <code>upn</code>, <code>tid</code>, ...</td></tr>
+    <tr><td>Admin UI</td><td>authentication.oit.duke.edu</td><td>portal.azure.com</td></tr>
   </table>
 </section>
 
-<!-- Slide 6: Register the Application -->
+<!-- Slide 4: Confidential vs Public -->
 <section>
-  <h2>Register the Application</h2>
-  <ol>
-    <li>Azure Portal &rarr; Azure Active Directory &rarr; App registrations &rarr; <strong>New</strong></li>
-    <li>Name: <code>"MCP Financial Server"</code></li>
-    <li>Single tenant (your org only)</li>
-    <li>Redirect URI: <code>http://localhost:8000/mcp/oauth/callback</code></li>
-    <li>Copy <strong>Client ID</strong> and <strong>Tenant ID</strong></li>
-  </ol>
-</section>
-
-<!-- Slide 7: Create Client Secret -->
-<section>
-  <h2>Create Client Secret</h2>
-  <ol>
-    <li>Certificates &amp; secrets &rarr; <strong>New client secret</strong></li>
-    <li>Add a description, choose expiry</li>
-    <li>Copy the <strong>VALUE</strong> immediately</li>
-  </ol>
-  <br><br>
-  <p><strong style="color: #ff6b6b;">Warning:</strong> The secret value is shown <em>only once</em>!</p>
-  <br>
-  <p>This goes in your <code>.env</code> file:</p>
-  <pre><code class="bash" data-trim>
-AZURE_CLIENT_SECRET=your-secret-value-here
-  </code></pre>
-</section>
-
-<!-- Slide 8: Expose an API -->
-<section>
-  <h2>Expose an API</h2>
-  <ol>
-    <li>Expose an API &rarr; Set Application ID URI (accept default)</li>
-    <li>Add a scope: <code>access_as_user</code></li>
-    <li>Who can consent: <strong>Admins and users</strong></li>
-  </ol>
-  <br><br>
-  <p>This creates the scope:</p>
-  <pre><code class="text" data-trim>
-api://&lt;client-id&gt;/access_as_user
-  </code></pre>
-  <p class="small">This scope is what MCP clients request when authenticating</p>
-</section>
-
-<!-- Slide 9: Duke-specific: App Approval -->
-<section>
-  <h2>Duke-Specific: App Approval</h2>
+  <h2>Confidential Client</h2>
   <ul>
-    <li>Duke's Azure tenant requires <strong>admin approval</strong> for new apps</li>
-    <li>Email <code>help@oit.duke.edu</code> (group: Cloud Services)</li>
-    <li>Describe your app's purpose and scope</li>
-    <li>App <strong>won't work</strong> until approved by tenant administrators</li>
+    <li>"Confidential" = the <em>server</em> can safely hold a secret</li>
+    <li>Azure gives you a <code>client_secret</code> value; server uses it to prove identity when exchanging the auth code for tokens</li>
+    <li>Suitable when the server-side deployment can keep a secret (env var, secrets manager, etc.)</li>
+    <li>Next step (09) moves to a <em>public</em> client with PKCE &mdash; useful when you can't safely ship a secret</li>
   </ul>
-  <br><br>
-  <p class="small" style="color: #ff6b6b;">Plan ahead &mdash; approval can take several business days</p>
 </section>
 
-<!-- Slide 10: FastMCP Auth Setup -->
+<!-- Slide 5: Register the Azure app -->
 <section>
-  <h2>FastMCP Auth Setup</h2>
+  <h2>Register the Azure App</h2>
+  <ol>
+    <li>Portal &rarr; App registrations &rarr; <strong>New registration</strong></li>
+    <li>Platform: <strong>Web</strong>. Redirect URI:<br>
+      <code class="small">http://localhost:8000/callback</code></li>
+    <li><strong>Certificates &amp; secrets</strong> &rarr; New client secret &rarr; copy the <em>value</em> (not the secret ID)</li>
+    <li><strong>Expose an API</strong> &rarr; accept default <code>api://&lt;client_id&gt;</code> &rarr; add scope <code>access_as_user</code></li>
+    <li>Copy tenant ID + client ID from Overview</li>
+  </ol>
+</section>
+
+<!-- Slide 6: Env vars -->
+<section>
+  <h2>Env Vars</h2>
+  <pre><code class="language-bash" data-trim data-noescape>
+AZURE_TENANT_ID=&lt;your tenant&gt;
+AZURE_CLIENT_ID=&lt;application id&gt;
+AZURE_CLIENT_SECRET=&lt;the *value*, not the secret ID&gt;
+
+AZURE_API_SCOPE=access_as_user
+SERVER_BASE_URL=http://localhost:8000
+ADDITIONAL_AUTH_SCOPES=email,openid,profile,offline_access
+  </code></pre>
+  <p class="small">No Settings class. <code>load_dotenv()</code> at the top of <code>server.py</code>.</p>
+</section>
+
+<!-- Slide 7: The whole server -->
+<section>
+  <h2>The Whole Server</h2>
   <pre><code class="python" data-trim data-noescape>
+from fastmcp import FastMCP
 from fastmcp.server.auth import OAuthProxy
 from fastmcp.server.auth.providers.jwt import JWTVerifier
-base = f"https://login.microsoftonline.com/{tenant}"
+
 token_verifier = JWTVerifier(
-    jwks_uri=f"{base}/discovery/v2.0/keys",
-    issuer=f"{base}/v2.0", audience=config.azure_client_id)
+    jwks_uri=f"https://login.microsoftonline.com/{TENANT}/discovery/v2.0/keys",
+    issuer=f"https://login.microsoftonline.com/{TENANT}/v2.0",
+    audience=CLIENT_ID,
+)
+
+scopes = [f"api://{CLIENT_ID}/access_as_user",
+          "email", "openid", "profile", "offline_access"]
+
 auth = OAuthProxy(
-    upstream_authorization_endpoint=f"{base}/oauth2/v2.0/authorize",
-    upstream_token_endpoint=f"{base}/oauth2/v2.0/token",
-    upstream_client_id=config.azure_client_id,
-    upstream_client_secret=config.azure_client_secret,
-    upstream_scopes=[config.full_mcp_scope],
-    token_verifier=token_verifier)
-mcp = FastMCP("Server", auth=auth)
+    upstream_authorization_endpoint=f"https://login.microsoftonline.com/{TENANT}/oauth2/v2.0/authorize",
+    upstream_token_endpoint         =f"https://login.microsoftonline.com/{TENANT}/oauth2/v2.0/token",
+    upstream_client_id     =CLIENT_ID,
+    upstream_client_secret =CLIENT_SECRET,
+    valid_scopes           =scopes,
+    extra_authorize_params ={"scope": " ".join(scopes)},
+    token_verifier         =token_verifier,
+    base_url               =SERVER_BASE_URL,
+)
+
+mcp = FastMCP("AzureConfidentialDemo", auth=auth)
   </code></pre>
 </section>
 
-<!-- Slide 11: Why OAuthProxy? -->
+<!-- Slide 8: FastMCP 3.x API note -->
 <section>
-  <h2>Why OAuthProxy?</h2>
+  <h2>FastMCP 3.x API Note</h2>
   <ul>
-    <li>MCP clients use <span class="highlight">Dynamic Client Registration</span> (DCR)</li>
-    <li>Azure AD <strong>doesn't support</strong> DCR natively</li>
-    <li>OAuthProxy bridges the gap:</li>
-  </ul>
-  <br>
-  <pre><code class="text" data-trim>
-MCP Client ──DCR──> OAuthProxy ──OAuth 2.0──> Azure AD
-  </code></pre>
-  <br>
-  <ul class="small">
-    <li>Presents a DCR-compatible interface to MCP clients</li>
-    <li>Translates to standard OAuth 2.0 against Azure AD</li>
-    <li>Also mints its own JWTs and encrypts stored tokens</li>
+    <li>Earlier drafts of this course used <code>upstream_scopes=...</code></li>
+    <li>FastMCP 3.x renamed it to <code>valid_scopes=...</code> and moved the outbound scope list to <code>extra_authorize_params</code></li>
+    <li>Net effect is the same: Azure sees the scopes in the <code>authorize</code> request, FastMCP validates them in the incoming tokens</li>
   </ul>
 </section>
 
-<!-- Slide 12: Accessing the authenticated user -->
+<!-- Slide 9: JWTs vs introspection -->
 <section>
-  <h2>Authenticated User</h2>
+  <h2>Azure JWT &ne; Duke Opaque</h2>
+  <ul>
+    <li>Azure AD issues a JWT access token whose header references a key ID</li>
+    <li>Validation is purely local: fetch JWKS once, verify signature + issuer + audience + exp</li>
+    <li>No per-call network hop to Azure &mdash; cheaper and faster than Duke introspection</li>
+    <li>Scopes travel in the <code>scp</code> (delegated) or <code>roles</code> (app) claim</li>
+  </ul>
+</section>
+
+<!-- Slide 10: Tools & resources -->
+<section>
+  <h2>Tools &amp; Resources</h2>
   <pre><code class="python" data-trim data-noescape>
-from fastmcp.server.dependencies import get_access_token
+@mcp.tool
+def hello(name: str = "world") -> str:
+    return f"hello, {name}!"
 
 @mcp.tool
-async def get_authenticated_user() -> str:
-    token = get_access_token()
-    if not token:
-        return json.dumps({"error": "Not authenticated"})
-    claims = token.claims or {}
-    return json.dumps({
-        "email": claims.get("preferred_username"),
-        "name": claims.get("name"),
-    })
+def whoami() -> dict:
+    tok = get_access_token()
+    if tok is None:
+        return {"error": "no access token in context"}
+    keep = ("oid", "upn", "preferred_username",
+            "name", "tid", "scp", "appid")
+    return {
+        "client_id": tok.client_id,
+        "scopes":    tok.scopes,
+        "claims":    {k: tok.claims.get(k) for k in keep
+                      if tok.claims.get(k)},
+    }
+
+@mcp.resource("user://me")
+def me() -> dict:
+    return whoami()
   </code></pre>
-  <p class="small"><code>get_access_token()</code> works in any tool &mdash; no <code>ctx</code> parameter needed</p>
 </section>
 
-<!-- Slide 13: Graceful degradation -->
+<!-- Slide 11: Claims cheat sheet -->
 <section>
-  <h2>Graceful Degradation</h2>
-  <pre><code class="python" data-trim data-noescape>
-auth = None
-if config.auth_enabled:  # AZURE_CLIENT_ID is set
-    token_verifier = JWTVerifier(...)
-    auth = OAuthProxy(...)
-
-mcp = FastMCP("Server", auth=auth)
-  </code></pre>
-  <br>
-  <ul>
-    <li>Auth is <strong>disabled</strong> when Azure vars are empty</li>
-    <li>Server still works without auth for <em>development</em></li>
-    <li>Production: always set the Azure vars</li>
-  </ul>
-  <pre><code class="python" data-trim>
-# config.py
-@property
-def auth_enabled(self) -> bool:
-    return bool(self.azure_client_id and self.azure_tenant_id)
-  </code></pre>
+  <h2>Azure Claim Cheat Sheet</h2>
+  <table class="small">
+    <tr><th>Claim</th><th>Meaning</th></tr>
+    <tr><td><code>oid</code></td><td>Stable user object ID (the one to index on)</td></tr>
+    <tr><td><code>upn</code> / <code>preferred_username</code></td><td>User's email-shaped principal name</td></tr>
+    <tr><td><code>name</code></td><td>Display name</td></tr>
+    <tr><td><code>tid</code></td><td>Tenant ID &mdash; useful for multi-tenant apps</td></tr>
+    <tr><td><code>scp</code></td><td>Space-separated granted delegated scopes</td></tr>
+    <tr><td><code>roles</code></td><td>App roles (when using app-only grants)</td></tr>
+    <tr><td><code>appid</code></td><td>The client that obtained the token</td></tr>
+  </table>
 </section>
 
-<!-- Slide 14: Key Takeaways -->
+<!-- Slide 12: Auth Flow -->
+<section>
+  <h2>Auth Flow</h2>
+  <pre class="small" style="text-align: left; box-shadow: none;">
+MCP Client                FastMCP                  Azure AD
+    │                        │                        │
+    │── tools/list ─────────&gt;│                        │
+    │&lt;─── 401 + metadata ────│                        │
+    │── /register (DCR) ────&gt;│                        │
+    │── /authorize ─────────&gt;│── 302 ────────────────&gt;│
+    │                        │&lt;── code (after login) ─│
+    │── /callback (code) ───&gt;│── code + secret ──────&gt;│
+    │                        │&lt;── JWT access_token ───│
+    │── tools/call + bearer &gt;│── JWKS (once) ────────&gt;│
+    │                        │  local verify {iss,aud,exp,sig}
+    │&lt;──── result ───────────│                        │
+  </pre>
+</section>
+
+<!-- Slide 13: Run it -->
+<section>
+  <h2>Run It</h2>
+  <pre><code class="language-bash" data-trim data-noescape>
+cp .env.example .env
+# fill AZURE_TENANT_ID / AZURE_CLIENT_ID / AZURE_CLIENT_SECRET
+uv sync
+python server.py
+  </code></pre>
+  <p class="small">Verify: <code>GET /.well-known/oauth-authorization-server</code> should 200 with Azure-shaped metadata.</p>
+</section>
+
+<!-- Slide 14: Key takeaways -->
 <section>
   <h2>Key Takeaways</h2>
   <ul>
-    <li><span class="highlight">OAuthProxy</span> bridges Azure AD with MCP's DCR protocol</li>
-    <li><span class="highlight">JWTVerifier</span> validates tokens using Azure's JWKS endpoint</li>
-    <li><code>get_access_token()</code> gets the user's token in any tool</li>
-    <li>Auth gracefully degrades when Azure vars aren't set</li>
-    <li>Duke apps need admin approval via <code>help@oit.duke.edu</code></li>
+    <li>Azure AD uses <code>OAuthProxy</code> + <code>JWTVerifier</code></li>
+    <li>Confidential client = server holds the secret, exchanges code for tokens</li>
+    <li>JWT validation is local (JWKS) &mdash; no per-call introspection</li>
+    <li>FastMCP 3.x: <code>valid_scopes</code> + <code>extra_authorize_params["scope"]</code></li>
+    <li>Same minimal file shape as step 07 &mdash; only the auth block changes</li>
   </ul>
-  <br><br>
-  <p class="small"><strong>Alternative:</strong> If you're at Duke, see <em>Step 07: Duke OIDC</em> for Duke's own identity provider</p>
-  <p class="small">Next: Public clients and security hardening &rarr;</p>
+  <p class="small" style="margin-top: 0.5em;">Next: step 09 drops the secret &mdash; public client + PKCE + security add-ons.</p>
 </section>
 
 </div>
@@ -258,10 +250,7 @@ def auth_enabled(self) -> bool:
 <script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/plugin/highlight/highlight.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/plugin/notes/notes.min.js"></script>
 <script>
-Reveal.initialize({
-  hash: true,
-  plugins: [RevealHighlight, RevealNotes]
-});
+Reveal.initialize({ hash: true, plugins: [RevealHighlight, RevealNotes] });
 </script>
 </body>
 </html>
