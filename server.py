@@ -1,13 +1,19 @@
 """
 Step 07: Composed Server with Duke OIDC
 
-Demonstrates mounting multiple FastMCP servers into a single endpoint.
-The financial server is mounted with a namespace prefix.
+Top-level entry point. Declares the Duke OIDC auth proxy on the main
+FastMCP instance (so /.well-known/oauth-* endpoints are advertised) and
+mounts the financial server as a namespaced child.
+
+The `auth` object is built in financial_server.py so the child server
+can also be run standalone for testing; the composed main re-uses it.
 """
 
+from financial_server import mcp as financial_mcp, auth
 from fastmcp import FastMCP
+from config import load_config
 
-from financial_server import mcp as financial_mcp
+config = load_config()
 
 main = FastMCP(
     "UniversityServices",
@@ -15,9 +21,10 @@ main = FastMCP(
         "Unified university services server. Use finance_* tools for "
         "financial data queries, and other namespaced tools as available."
     ),
+    auth=auth,
 )
 
 main.mount(financial_mcp, namespace="finance")
 
 if __name__ == "__main__":
-    main.run(transport="http", host="0.0.0.0", port=8000)
+    main.run(transport="http", host=config.server_host, port=config.server_port)
