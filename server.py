@@ -1,215 +1,193 @@
 """
-Step 03: Context, Logging, and Elicitation
+Step 05: Financial Query MCP Server
 
-Building on the hello world server, we add:
-- Resources: read-only data the LLM can access (static and dynamic)
-- Resource templates: parameterized URIs for dynamic content
-- Prompts: reusable message templates for common interactions
-- Context-aware tools: logging, progress reporting, and elicitation
+A database-backed MCP server for querying university general ledger data.
+Provides SQL query execution with safety checks, schema resources, and
+domain knowledge resources.
 """
 
-import asyncio
 import json
-from datetime import datetime, timezone
-from fastmcp import Context, FastMCP
-from fastmcp.prompts import Message
+import logging
+
+from fastmcp import FastMCP, Context
+
+from config import load_config
+from database import execute_query, get_table_info, get_column_info, SQLValidationError, DatabaseError
+
+config = load_config()
+logging.basicConfig(level=config.get_log_level(), format="%(asctime)s %(levelname)s [%(name)s] %(message)s")
+logger = logging.getLogger(__name__)
 
 mcp = FastMCP(
-    "HelloWorld",
+    "FinancialData",
     instructions=(
-        "A demo MCP server with tools, resources, and prompts. "
-        "Read the 'about' resource first to understand what's available."
+        "University General Ledger query server. Use the schema:// resources to "
+        "discover tables and columns. Use domain:// resources to understand fund "
+        "accounting concepts. Use query_sql to execute SELECT queries."
     ),
 )
 
 
-# === Tools (from step-01) ===
+# === Tools ===
 
 
 @mcp.tool
-def echo(message: str) -> str:
-    """Echo a message back to the caller."""
-    return f"Echo: {message}"
+async def query_sql(sql: str, ctx: Context) -> str:
+    """Execute a SQL SELECT query against the university general ledger database.
 
-
-@mcp.tool
-def add(a: int, b: int) -> int:
-    """Add two numbers together and return the result."""
-    return a + b
-
-
-@mcp.tool
-def greet(name: str, greeting: str = "Hello") -> str:
-    """Greet someone by name. Optionally customize the greeting."""
-    return f"{greeting}, {name}! Welcome to MCP."
-
-
-# === Resources ===
-
-
-@mcp.resource("resource://about", mime_type="text/plain")
-def get_about() -> str:
-    """Static information about this server."""
-    return (
-        "HelloWorld MCP Server v0.2\n"
-        "A demo server for learning MCP concepts.\n"
-        "Available: tools (echo, add, greet), resources, and prompts."
-    )
-
-
-@mcp.resource("resource://server-time", mime_type="application/json")
-def get_server_time() -> str:
-    """Dynamic resource that returns the current server time."""
-    now = datetime.now(timezone.utc)
-    return json.dumps({
-        "utc": now.isoformat(),
-        "unix_timestamp": int(now.timestamp()),
-    })
-
-
-@mcp.resource("resource://greeting/{name}", mime_type="text/plain")
-def get_greeting_resource(name: str) -> str:
-    """Resource template — generates a personalized greeting for any name."""
-    return f"Hello, {name}! This greeting was generated from a resource template."
-
-
-@mcp.resource(
-    "data://server-config",
-    mime_type="application/json",
-    description="Server configuration and capabilities (read-only)",
-)
-def get_server_config() -> str:
-    """Exposes server metadata as structured JSON."""
-    return json.dumps({
-        "server_name": "HelloWorld",
-        "version": "0.2",
-        "transport": "http-streamable",
-        "capabilities": ["tools", "resources", "prompts"],
-    })
-
-
-# === Prompts ===
-
-
-@mcp.prompt
-def code_review(language: str, code: str) -> list[Message]:
-    """Generate a code review request for the given code."""
-    return [
-        Message(
-            f"Please review the following {language} code for bugs, style issues, "
-            f"and potential improvements:\n\n```{language}\n{code}\n```"
-        ),
-    ]
-
-
-@mcp.prompt
-def summarize(text: str, style: str = "concise") -> str:
-    """Generate a summarization request with a specified style."""
-    return f"Please provide a {style} summary of the following text:\n\n{text}"
-
-
-@mcp.prompt
-def explain_concept(concept: str, audience: str = "beginner") -> list[Message]:
-    """Generate a request to explain a concept for a specific audience."""
-    return [
-        Message(
-            f"You are an expert teacher. Explain '{concept}' to a {audience} audience. "
-            f"Use analogies and examples where helpful."
-        ),
-        Message("I'll explain this step by step.", role="assistant"),
-    ]
-
-
-# === Context-Aware Tools ===
-
-
-@mcp.tool
-async def analyze_text(text: str, ctx: Context) -> str:
-    """Analyze text with progress reporting and context logging.
-
-    Demonstrates:
-    - Context injection (ctx parameter is auto-injected, hidden from schema)
-    - Logging to the client via ctx.info(), ctx.warning()
-    - Progress reporting via ctx.report_progress()
+    IMPORTANT:
+    - Only SELECT queries are allowed (read-only access).
+    - Results are limited to 2000 rows. If your query returns more, add a LIMIT clause.
+    - Use schema:// resources to discover available tables and columns.
+    - Use domain:// resources to understand fund accounting terminology.
     """
-    await ctx.info("Starting text analysis...")
+    try:
+        rows, total = await execute_query(config.database_path_resolved, sql, max_rows=config.max_rows)
+    except SQLValidationError as e:
+        return f"Query validation error: {e}"
+    except DatabaseError as e:
+        return f"Database error: {e}"
 
-    # Step 1: Basic stats
-    await ctx.report_progress(progress=1, total=4)
-    words = text.split()
-    word_count = len(words)
-    char_count = len(text)
-    await ctx.info(f"Counted {word_count} words, {char_count} characters")
-
-    # Step 2: Word frequency
-    await ctx.report_progress(progress=2, total=4)
-    freq: dict[str, int] = {}
-    for word in words:
-        w = word.lower().strip(".,!?;:")
-        freq[w] = freq.get(w, 0) + 1
-    top_words = sorted(freq.items(), key=lambda x: x[1], reverse=True)[:5]
-
-    # Step 3: Sentence count
-    await ctx.report_progress(progress=3, total=4)
-    sentences = len([s for s in text.split(".") if s.strip()])
-
-    if word_count > 1000:
-        await ctx.warning("Large text detected — analysis may be approximate")
-
-    # Step 4: Done
-    await ctx.report_progress(progress=4, total=4)
-    await ctx.info("Analysis complete")
-
-    return json.dumps({
-        "word_count": word_count,
-        "character_count": char_count,
-        "sentence_count": sentences,
-        "top_words": [{"word": w, "count": c} for w, c in top_words],
-    })
-
-
-@mcp.tool
-async def delete_records(table: str, confirm: bool = False, ctx: Context = None) -> str:
-    """Simulate deleting records with elicitation for confirmation.
-
-    Demonstrates ctx.elicit() — requesting structured input from the user
-    during tool execution. The LLM client will prompt the user for confirmation.
-    """
-    if not confirm:
-        result = await ctx.elicit(
-            message=f"Are you sure you want to delete all records from '{table}'? This cannot be undone.",
-            response_type=bool,
+    if total > config.warning_rows:
+        await ctx.warning(
+            f"Query returned {total:,} rows (showing first {min(total, config.max_rows):,}). "
+            f"Consider adding a LIMIT clause or more specific WHERE conditions."
         )
 
-        if result.action != "accept" or not result.data:
-            await ctx.info("Delete cancelled by user")
-            return "Operation cancelled."
+    if total > config.max_rows:
+        await ctx.info(f"Results truncated from {total:,} to {config.max_rows:,} rows.")
 
-    await ctx.warning(f"Simulating delete of all records from '{table}'")
-    await asyncio.sleep(0.5)
-    return f"(Simulated) Deleted all records from '{table}'."
+    return json.dumps({"total_rows": total, "returned_rows": len(rows), "truncated": total > config.max_rows, "data": rows})
 
 
 @mcp.tool
-async def process_items(items: list[str], ctx: Context) -> str:
-    """Process a list of items with detailed progress reporting.
-
-    Demonstrates progress reporting for batch operations where
-    total is known upfront and progress increments per item.
+async def get_database_info(ctx: Context) -> str:
+    """Get a summary of all tables, their columns, and row counts.
+    Call this first to understand the database structure before writing queries.
     """
-    results = []
-    total = len(items)
-    await ctx.info(f"Processing {total} items...")
+    try:
+        tables = await get_table_info(config.database_path_resolved)
+    except DatabaseError as e:
+        return f"Error: {e}"
+    await ctx.info(f"Found {len(tables)} tables")
+    return json.dumps(tables, indent=2)
 
-    for i, item in enumerate(items):
-        await ctx.report_progress(progress=i + 1, total=total)
-        await ctx.info(f"Processing: {item}")
-        await asyncio.sleep(0.2)
-        results.append(f"Processed: {item.upper()}")
 
-    await ctx.info("All items processed")
-    return json.dumps(results)
+# === Schema Resources ===
+
+
+@mcp.resource("schema://tables", mime_type="application/json")
+async def list_tables() -> str:
+    """List all available tables with their row counts."""
+    tables = await get_table_info(config.database_path_resolved)
+    summary = [{"table": t["table_name"], "rows": t["row_count"], "columns": len(t["columns"])} for t in tables]
+    return json.dumps(summary, indent=2)
+
+
+@mcp.resource("schema://{table_name}/columns", mime_type="application/json")
+async def table_columns(table_name: str) -> str:
+    """Get column details for a specific table."""
+    try:
+        info = await get_column_info(config.database_path_resolved, table_name)
+    except SQLValidationError as e:
+        return json.dumps({"error": str(e)})
+    return json.dumps(info, indent=2)
+
+
+# === Domain Resources ===
+
+
+@mcp.resource("domain://funds", mime_type="text/markdown")
+def fund_types() -> str:
+    """Explains university fund accounting types."""
+    return """# Fund Types in University Accounting
+
+| Fund Code | Name | Type | Description |
+|-----------|------|------|-------------|
+| 10 | General Operating | Unrestricted | Primary university operations — faculty salaries, utilities, supplies |
+| 20 | Restricted Grants | Restricted | Externally sponsored research (NSF, NIH, DOD). Must be spent per grant terms |
+| 25 | Restricted Gifts | Restricted | Donor-restricted gifts. Spending limited to donor's specified purpose |
+| 30 | Endowment | Endowment | Permanent funds — only investment returns can be spent |
+| 40 | Auxiliary Enterprises | Auxiliary | Self-supporting: housing, dining, parking, bookstore |
+| 50 | Agency Funds | Agency | Held on behalf of student organizations and affiliates |
+| 60 | Plant Funds | Unrestricted | Capital projects, building construction, major equipment |
+| 70 | Loan Funds | Restricted | Student loan programs (Perkins, institutional) |
+
+## Key concepts
+
+- **Restricted vs Unrestricted**: Restricted funds have external constraints on how they can be spent
+- **Encumbrances**: Commitments (purchase orders, contracts) that reserve budget but haven't been paid
+- **Budget vs Actual**: Budget entries show planned spending; actual entries show real spending
+- **Indirect Cost Recovery (IDC)**: Overhead charges on grants (~50-60% of direct costs)
+"""
+
+
+@mcp.resource("domain://accounts", mime_type="text/markdown")
+def chart_of_accounts() -> str:
+    """Explains the chart of accounts structure."""
+    return """# Chart of Accounts
+
+University GL accounts follow a standard numbering system:
+
+| Range | Category | Examples |
+|-------|----------|----------|
+| 1xxx | Assets | Cash, Receivables, Investments, Buildings |
+| 2xxx | Liabilities | Accounts Payable, Deferred Revenue, Bonds |
+| 3xxx | Net Assets (Equity) | Unrestricted, Temporarily Restricted, Permanently Restricted |
+| 4xxx | Revenue | Tuition, Grants, Gifts, Investment Income, Clinical Revenue |
+| 5xxx | Salaries & Benefits | Faculty Salaries, Staff Salaries, Benefits, Stipends |
+| 6xxx | Operating Expenses | Supplies, Travel, Equipment, Services, Facilities |
+| 7xxx | Transfers & Debt | Internal Transfers, Debt Service |
+
+## Key subcategories for expenses
+
+- **salaries** (5110-5140): Faculty, staff, graduate stipends, hourly wages
+- **benefits** (5200-5230): Health insurance, retirement, tuition remission
+- **supplies** (6100-6130): Office, lab, computer, medical supplies
+- **travel** (6200-6220): Domestic, international, conference registration
+- **equipment** (6300-6330): Computers, lab equipment, furniture (capital items)
+- **services** (6400-6440): Software, cloud computing, consulting, maintenance
+"""
+
+
+@mcp.resource("domain://departments", mime_type="text/markdown")
+def department_list() -> str:
+    """Lists all departments organized by school."""
+    return """# University Departments
+
+## Arts & Sciences
+COMPSCI (Computer Science), MATH (Mathematics), PHYS (Physics), CHEM (Chemistry),
+BIO (Biology), ENGLISH (English), HISTORY (History), POLISCI (Political Science),
+ECON (Economics), PSYCH (Psychology), SOCIOL (Sociology), PHILO (Philosophy),
+ROMANCE (Romance Studies), STATS (Statistical Science), NEURO (Neuroscience)
+
+## Engineering
+ECE (Electrical & Computer Engineering), MECHENG (Mechanical Engineering),
+CIVENG (Civil & Environmental Engineering), BME (Biomedical Engineering),
+MATSCI (Materials Science)
+
+## Medicine
+MEDSCHOOL (School of Medicine), PATHOL (Pathology), PEDS (Pediatrics),
+SURG (Surgery), NEUROMD (Neurology), CARDIO (Cardiology),
+ONCOL (Oncology), RADIOL (Radiology)
+
+## Law
+LAW (School of Law), LAWCLIN (Law Clinical Programs)
+
+## Business
+BUSINESS (School of Business), FINANCE (Finance Department), MKTG (Marketing)
+
+## Other Schools
+PUBPOL (Public Policy), ENVIRON (Environmental Policy), NURSING (School of Nursing),
+DIVINITY (Divinity School), GRADSCH (Graduate School Administration)
+
+## Central Administration
+PROVOST (Provost Office), FINAID (Financial Aid), REGIST (Registrar),
+ITDEPT (Information Technology), FACMGMT (Facilities Management), HR (Human Resources),
+LIBR (University Libraries), ATHLET (Athletics), ALUMNI (Alumni Affairs),
+RESADM (Research Administration)
+"""
 
 
 if __name__ == "__main__":
-    mcp.run(transport="http", host="0.0.0.0", port=8000)
+    mcp.run(transport="http", host=config.server_host, port=config.server_port)

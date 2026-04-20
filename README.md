@@ -231,7 +231,7 @@ The generated `.db` file is gitignored. Generation takes a few minutes and produ
 
 | File | Purpose |
 |------|---------|
-| `financial_server.py` | Main MCP server — tools, resources, and entry point |
+| `server.py` | Main MCP server — tools, resources, and entry point |
 | `database.py` | Async SQLite layer with SQL validation and safety checks |
 | `config.py` | Pydantic settings loaded from environment variables / `.env` file |
 | `.env.example` | Template for environment variable configuration |
@@ -279,7 +279,7 @@ uv run python generate_data.py
 cp .env.example .env
 
 # Start the financial server
-uv run python financial_server.py
+uv run python server.py
 ```
 
 The server starts on `http://0.0.0.0:8000` by default. Connect a client the same way as previous steps, pointing at `http://localhost:8000/mcp`.
