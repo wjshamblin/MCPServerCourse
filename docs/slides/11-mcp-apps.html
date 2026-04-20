@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Step 11: MCP Apps</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reset.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reveal.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/theme/night.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/plugin/highlight/monokai.min.css">
+<style>
+  .reveal { font-size: 32px; }
+  .reveal h1 { text-transform: none; font-size: 1.8em; }
+  .reveal h2 { text-transform: none; font-size: 1.4em; }
+  .reveal h3 { text-transform: none; font-size: 1.1em; }
+  .reveal pre { width: 100%; margin: 0.4em 0; }
+  .reveal pre code { max-height: 400px; font-size: 0.75em; line-height: 1.35; }
+  .reveal ul, .reveal ol { text-align: left; font-size: 0.9em; }
+  .reveal li { margin-bottom: 0.3em; }
+  .reveal p { font-size: 0.9em; }
+  .reveal .small { font-size: 0.65em; }
+  .reveal .highlight { color: #42affa; }
+  .reveal table { margin: 0 auto; font-size: 0.8em; }
+  .reveal table th, .reveal table td { padding: 0.2em 0.6em; border: 1px solid #444; }
+  .reveal table th { background: #333; }
+  .reveal .two-col { display: flex; gap: 2em; }
+  .reveal .two-col > * { flex: 1; }
+  .reveal .slides section { overflow: hidden; }
+</style>
+</head>
+<body>
+<div class="reveal">
+<div class="slides">
+
+<!-- Slide 1: Title -->
+<section>
+  <h1>Step 11</h1>
+  <h2>MCP Apps</h2>
+  <p>Interactive dashboards inside the conversation</p>
+</section>
+
+<!-- Slide 2: What are MCP Apps? -->
+<section>
+  <h2>What are MCP Apps?</h2>
+  <ul>
+    <li>Tools that return <span class="highlight">interactive HTML UIs</span> rendered in the chat</li>
+    <li>Not separate web apps &mdash; they live <em>inside</em> the conversation</li>
+    <li>Sandboxed iframe with bidirectional communication</li>
+    <li>Supported by Claude, Claude Desktop, VS Code Copilot, Goose</li>
+  </ul>
+</section>
+
+<!-- Slide 3: Why not just a web app? -->
+<section>
+  <h2>Why not just a web app?</h2>
+  <ul>
+    <li><span class="highlight">Context preservation</span> &mdash; UI lives in the conversation</li>
+    <li><span class="highlight">Bidirectional data flow</span> &mdash; app calls server tools</li>
+    <li><span class="highlight">Security</span> &mdash; sandboxed iframe, no cookie/DOM access</li>
+    <li><span class="highlight">No separate auth</span> &mdash; uses existing MCP session</li>
+  </ul>
+</section>
+
+<!-- Slide 4: Two approaches in FastMCP -->
+<section>
+  <h2>Two Approaches in FastMCP</h2>
+  <table>
+    <tr><th>Pattern</th><th>When to use</th><th>Decorator</th></tr>
+    <tr>
+      <td><code>app=True</code></td>
+      <td>Simple charts, single data fetch</td>
+      <td><code>@mcp.tool(app=True)</code></td>
+    </tr>
+    <tr>
+      <td><code>FastMCPApp</code></td>
+      <td>Backend tools, forms, drill-down</td>
+      <td><code>@app.ui()</code> + <code>@app.tool()</code></td>
+    </tr>
+  </table>
+</section>
+
+<!-- Slide 5: App 1: Spending Dashboard -->
+<section>
+  <h2>App 1: Spending Dashboard</h2>
+  <pre><code class="language-python">@mcp.tool(app=True)
+async def spending_dashboard(
+    department_code: str, fiscal_year: int = 2025
+) -> PrefabApp:
+    data = await get_department_spending(...)
+    with Column(gap=4, css_class="p-6") as view:
+        Heading(f"{dept} — FY{year} Spending")
+        BarChart(
+            data=chart_data,
+            series=[
+                ChartSeries(data_key="actual", label="Actual"),
+                ChartSeries(data_key="budget", label="Budget"),
+            ],
+            x_axis="category",
+        )
+    return PrefabApp(view=view)</code></pre>
+</section>
+
+<!-- Slide 6: Prefab UI Components -->
+<section>
+  <h2>Prefab UI Components</h2>
+  <ul>
+    <li><strong>Layout:</strong> Column, Row, Separator</li>
+    <li><strong>Content:</strong> Heading, Text, Badge</li>
+    <li><strong>Logic:</strong> ForEach, If, Form, Select, Button</li>
+    <li><strong>Charts:</strong> BarChart, LineChart, AreaChart, ChartSeries</li>
+    <li><strong>Actions:</strong> CallTool, SetState, ShowToast</li>
+  </ul>
+  <p class="small"><code>pip install "fastmcp[apps]"</code> + <code>prefab-ui</code></p>
+</section>
+
+<!-- Slide 7: App 2: Grant Portfolio (concept) -->
+<section>
+  <h2>App 2: Grant Portfolio</h2>
+  <ul>
+    <li><code>FastMCPApp</code> pattern &mdash; separate UI and backend tools</li>
+    <li><code>@app.ui()</code> &mdash; the entry point the LLM calls</li>
+    <li><code>@app.tool()</code> &mdash; backend tools the UI calls via <code>CallTool</code></li>
+    <li>Click a grant &rarr; <code>CallTool(get_grant_detail)</code> &rarr; updates state</li>
+  </ul>
+</section>
+
+<!-- Slide 8: FastMCPApp pattern -->
+<section>
+  <h2>FastMCPApp Pattern</h2>
+  <pre><code class="language-python">grant_app = FastMCPApp("GrantPortfolio")
+
+grant_app = FastMCPApp("GrantPortfolio")
+
+@grant_app.tool(model=True)
+async def get_grants(sponsor_filter: str = "") -> list[dict]:
+    ...  # Query database
+
+@grant_app.ui()
+async def grant_portfolio() -> PrefabApp:
+    with Column() as view:
+        with Form(on_submit=CallTool(
+            get_grants,
+            arguments={"sponsor_filter": STATE.sponsor_filter},
+            on_success=[SetState("grants", RESULT)],
+        )):
+            Select(name="sponsor_filter", ...)
+            Button("Filter")
+    initial = await get_grants(status_filter="active")
+    return PrefabApp(view=view, state={"grants": initial})</code></pre>
+</section>
+
+<!-- Slide 9: CallTool: UI → Server -->
+<section>
+  <h2>CallTool: UI &rarr; Server</h2>
+  <pre><code class="language-text">User clicks grant card in UI
+    → CallTool(get_grant_detail, {grant_id: "NSF-123"})
+    → Server executes query
+    → SetState("detail", RESULT)
+    → UI updates with spending chart + transactions</code></pre>
+  <p>No page reload. No separate API. MCP handles it.</p>
+</section>
+
+<!-- Slide 10: Adding Duke OIDC Auth -->
+<section>
+  <h2>Adding Duke OIDC Auth</h2>
+  <ul>
+    <li>Same <code>OIDCProxy</code> + <code>IntrospectionTokenVerifier</code> pattern</li>
+    <li>Auth is <span class="highlight">optional</span> (disabled when OIDC vars are empty)</li>
+    <li>Apps inherit the server's auth &mdash; no extra config</li>
+    <li><code>get_authenticated_user</code> tool available</li>
+  </ul>
+</section>
+
+<!-- Slide 11: Key Takeaways -->
+<section>
+  <h2>Key Takeaways</h2>
+  <ul>
+    <li><code>FastMCPApp</code> with <code>@app.ui()</code> + <code>@app.tool(model=True)</code></li>
+    <li><code>Form</code> + <code>Select</code> + <code>CallTool(fn, arguments={...STATE})</code></li>
+    <li>Use <code>STATE.field_name</code> to pass form values to tools</li>
+    <li>Prefab UI: charts, cards, metrics, progress bars, forms</li>
+    <li>Apps inherit server auth &mdash; secure by default</li>
+  </ul>
+  <p style="margin-top: 1em;">This is the final step of the course.</p>
+</section>
+
+</div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reveal.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/plugin/highlight/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/plugin/notes/notes.min.js"></script>
+<script>
+Reveal.initialize({
+  hash: true,
+  plugins: [RevealHighlight, RevealNotes]
+});
+</script>
+</body>
+</html>

@@ -1,7 +1,9 @@
 """
-Step 10: Composed Server — Finance + Directory (OBO)
+Step 11: Composed Server — Finance (with MCP Apps) + Directory (OBO)
 
 Mounts both the financial and directory servers under one endpoint.
+The financial server exposes three interactive MCP Apps (dashboards)
+in addition to its SQL query tools.
 """
 
 from fastmcp import FastMCP

@@ -508,3 +508,44 @@ models.py              — Pydantic models for results
 - `directory_find_user`, `directory_get_user_groups` — directory tools
 
 See `docs/azure-setup-step10.md` for the two-app-registration walkthrough.
+
+---
+
+# Step 11: MCP Apps — Interactive Dashboards
+
+Adds three interactive MCP Apps on top of the step-10 composed server. Each
+app renders inside compatible MCP clients (Claude Desktop, Cursor, VS Code
+Copilot) via Prefab UI components. Backend tools remain callable by the LLM
+directly.
+
+## Apps
+
+| App | Purpose |
+|-----|---------|
+| `spending_app` | Department spending dashboard — select department/fiscal year, see budget vs actual by category (bar chart) |
+| `grant_app` | Grant portfolio monitor — filter by sponsor/status, drill into spending per grant |
+| `projection_app` | Grant spending projection — history + projected burn rate (line chart) |
+
+## Architecture
+
+```
+server.py              — Composed entry point (mounts finance + directory)
+financial_server.py    — Finance server + registers the three MCP apps
+financial_apps.py      — PrefabApp definitions (UI + backend tools)
+directory_server.py    — Directory server (from step 10)
+```
+
+## Running
+
+```bash
+uv run python server.py
+```
+
+Clients that support MCP Apps will render the dashboards inline; clients that
+don't still see the `finance_*` and `directory_*` tools as normal MCP tools.
+
+## New Dependencies
+
+- `fastmcp[apps]` — Apps extension
+- `prefab-ui` — Declarative UI components
+- `diskcache`, `pathvalidate` — app storage helpers

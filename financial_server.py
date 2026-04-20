@@ -1,14 +1,10 @@
 """
-Step 10: Financial Server (Azure Public Client Auth)
+Step 11: Financial Server with Azure Public Client Auth + MCP Apps
 
 Adds:
-- Lifespan for database connection management
-- Background task for long-running report generation
-- Server composition with mount()
-- Azure AD OAuth authentication (OAuthProxy, JWTVerifier)
-- get_authenticated_user tool
-- User allowlist authorization
-- Tamper-detected audit logging with SHA-256 hash chain
+- Everything from step 10 (lifespan, OAuth, audit, OBO — when mounted)
+- Three interactive MCP Apps (spending_app, grant_app, projection_app)
+  rendered inside MCP clients via Prefab UI components.
 """
 
 import csv
@@ -26,6 +22,7 @@ from fastmcp.prompts import Message
 from audit import AuditLogger
 from config import load_config
 from database import DatabasePool, SQLValidationError, DatabaseError
+from financial_apps import spending_app, grant_app, projection_app
 from nl2sql import nl_to_sql
 
 config = load_config()
@@ -330,6 +327,16 @@ def grant_status(status: str = "active") -> list[Message]:
 def department_spending(fiscal_year: int = 2025) -> list[Message]:
     """Department spending comparison."""
     return [Message(f"Compare department spending for FY{fiscal_year} by category.")]
+
+
+# === MCP Apps ===
+# Interactive dashboards rendered inside MCP clients (Claude Desktop, Cursor,
+# etc.) via Prefab UI components. Each app exposes @app.ui() entry points the
+# LLM can open, plus @app.tool(model=True) backends callable from both the UI
+# and the LLM.
+mcp.add_provider(spending_app)
+mcp.add_provider(grant_app)
+mcp.add_provider(projection_app)
 
 
 if __name__ == "__main__":
