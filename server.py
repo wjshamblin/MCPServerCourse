@@ -12,12 +12,19 @@ Like steps 07 and 08, this branch deliberately strips the financial /
 database / NL-to-SQL machinery so the auth + security pieces are the only
 things on the page.
 
+Reference:
+  FastMCP Azure (Microsoft Entra ID) OAuth integration guide:
+  https://gofastmcp.com/integrations/azure#azure-microsoft-entra-id-oauth--fastmcp
+
 What's new versus step 08:
-  - No `upstream_client_secret` → public client; PKCE proves identity.
+  - No `client_secret` → `AzureProvider` runs in public-client mode; PKCE
+    proves identity to Azure. FastMCP requires an explicit `jwt_signing_key`
+    in this mode (the confidential demo derived one from the secret).
   - `check_user_allowed()` gate around the privileged tool.
   - `audit.log(...)` on every privileged call (allowed or denied).
 
-Endpoints exposed at runtime are the same as step 08.
+Endpoints exposed at runtime are the same as step 08 (redirect URI is
+`/auth/callback`).
 
 Run:  python server.py
 
@@ -25,12 +32,18 @@ Required env vars (see .env.example):
   AZURE_TENANT_ID       Your Azure AD tenant ID
   AZURE_CLIENT_ID       Application (client) ID; configure the app as a
                         "Mobile and desktop applications" / public client
-                        with redirect URI http://localhost:8000/callback
-  AZURE_API_SCOPE       default: "access_as_user"
+                        with redirect URI http://localhost:8000/auth/callback
+                        AND enable "Allow public client flows" under
+                        Authentication → Advanced settings.
+  AZURE_API_SCOPE       default: "access_as_user"  (unprefixed — AzureProvider
+                        prepends `api://<client_id>/` automatically)
+  AZURE_GRAPH_SCOPES    optional, comma-separated Microsoft Graph scopes
   SERVER_BASE_URL       default: http://localhost:8000
   ALLOWED_USERS         comma-separated emails; empty = allow any
                         authenticated user
   AUDIT_LOG_DIR         default: "logs"
+  JWT_SIGNING_KEY       required in public-client mode. Generate with:
+                          python -c "import secrets; print(secrets.token_urlsafe(32))"
 """
 
 import logging
@@ -38,8 +51,7 @@ import os
 
 from dotenv import load_dotenv
 from fastmcp import FastMCP
-from fastmcp.server.auth import OAuthProxy
-from fastmcp.server.auth.providers.jwt import JWTVerifier
+from fastmcp.server.auth.providers.azure import AzureProvider
 from fastmcp.server.dependencies import get_access_token
 
 from audit import AuditLogger
@@ -53,13 +65,9 @@ logger = logging.getLogger(__name__)
 
 AZURE_TENANT_ID = os.environ.get("AZURE_TENANT_ID", "")
 AZURE_CLIENT_ID = os.environ.get("AZURE_CLIENT_ID", "")
-AZURE_API_SCOPE = os.environ.get("AZURE_API_SCOPE", "access_as_user")
+AZURE_API_SCOPE_RAW = os.environ.get("AZURE_API_SCOPE", "access_as_user")
+AZURE_GRAPH_SCOPES_RAW = os.environ.get("AZURE_GRAPH_SCOPES", "")
 SERVER_BASE_URL = os.environ.get("SERVER_BASE_URL", "http://localhost:8000")
-ADDITIONAL_SCOPES = [
-    s.strip() for s in os.environ.get(
-        "ADDITIONAL_AUTH_SCOPES", "email,openid,profile,offline_access"
-    ).split(",") if s.strip()
-]
 ALLOWED_USERS = [
     e.strip().lower() for e in os.environ.get("ALLOWED_USERS", "").split(",") if e.strip()
 ]
@@ -77,33 +85,68 @@ if not JWT_SIGNING_KEY:
         "print(secrets.token_urlsafe(32))\""
     )
 
-FULL_MCP_SCOPE = f"api://{AZURE_CLIENT_ID}/{AZURE_API_SCOPE}"
+
+def _normalize_scopes() -> tuple[list[str], list[str]]:
+    """Split AZURE_API_SCOPE / AZURE_GRAPH_SCOPES into the two buckets
+    AzureProvider expects: unprefixed `required_scopes` and verbatim
+    `additional_authorize_scopes`. Tolerates a legacy convention where
+    AZURE_API_SCOPE was a single comma-joined list mixing an already-URI-
+    prefixed API scope with Graph scopes.
+    """
+    api_prefix = f"api://{AZURE_CLIENT_ID}/"
+    required: list[str] = []
+    graph: list[str] = [s.strip() for s in AZURE_GRAPH_SCOPES_RAW.split(",") if s.strip()]
+
+    for raw in AZURE_API_SCOPE_RAW.split(","):
+        scope = raw.strip()
+        if not scope:
+            continue
+        if scope.startswith("https://graph.microsoft.com/"):
+            graph.append(scope)
+        elif scope.startswith(api_prefix):
+            required.append(scope[len(api_prefix):])
+        elif "://" in scope or "/" in scope:
+            graph.append(scope)
+        else:
+            required.append(scope)
+
+    if not required:
+        raise RuntimeError(
+            "AZURE_API_SCOPE must include at least one custom API scope name "
+            "(unprefixed, e.g. 'access_as_user')."
+        )
+    return required, graph
 
 
-# === Build the auth proxy (PUBLIC client — no client_secret) ===
-# Azure validates the request via PKCE (forward_pkce=True is the default)
-# instead of a shared secret. Configure the Azure app registration as
-# "Mobile and desktop applications" so it accepts public-client requests.
+REQUIRED_SCOPES, GRAPH_SCOPES = _normalize_scopes()
 
-token_verifier = JWTVerifier(
-    jwks_uri=f"https://login.microsoftonline.com/{AZURE_TENANT_ID}/discovery/v2.0/keys",
-    issuer=f"https://login.microsoftonline.com/{AZURE_TENANT_ID}/v2.0",
-    audience=AZURE_CLIENT_ID,
-)
 
-_all_scopes = [FULL_MCP_SCOPE] + ADDITIONAL_SCOPES
+# === Build the Azure auth provider (PUBLIC client — no client_secret) ===
+#
+# `AzureProvider` without a client_secret runs in public-client mode: Azure
+# validates the request via PKCE instead of a shared secret, and FastMCP
+# signs its own issued tokens with `jwt_signing_key` (normally derived from
+# the client secret, which we no longer have).
+#
+# Azure Portal setup for this mode:
+#   - Authentication → Allow public client flows: Yes
+#   - Authentication → Add a platform → "Mobile and desktop applications"
+#   - Redirect URI: http://localhost:8000/auth/callback
+#
+# See: https://gofastmcp.com/integrations/azure#azure-microsoft-entra-id-oauth--fastmcp
 
-auth = OAuthProxy(
-    upstream_authorization_endpoint=f"https://login.microsoftonline.com/{AZURE_TENANT_ID}/oauth2/v2.0/authorize",
-    upstream_token_endpoint=f"https://login.microsoftonline.com/{AZURE_TENANT_ID}/oauth2/v2.0/token",
-    upstream_client_id=AZURE_CLIENT_ID,
-    valid_scopes=_all_scopes,
-    extra_authorize_params={"scope": " ".join(_all_scopes)},
-    token_verifier=token_verifier,
+auth = AzureProvider(
+    client_id=AZURE_CLIENT_ID,
+    tenant_id=AZURE_TENANT_ID,
+    required_scopes=REQUIRED_SCOPES,
+    additional_authorize_scopes=["openid", "profile", "email", *GRAPH_SCOPES],
     base_url=SERVER_BASE_URL,
     jwt_signing_key=JWT_SIGNING_KEY,
 )
-logger.info("Azure OAuth (public client + PKCE) enabled (tenant: %s)", AZURE_TENANT_ID)
+logger.info(
+    "Azure OAuth (public client + PKCE) enabled (tenant: %s, required: %s, graph: %s)",
+    AZURE_TENANT_ID, REQUIRED_SCOPES, GRAPH_SCOPES or "(none)",
+)
 if ALLOWED_USERS:
     logger.info("Allowlist active: %d user(s)", len(ALLOWED_USERS))
 else:

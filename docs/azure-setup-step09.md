@@ -2,6 +2,8 @@
 
 This guide covers converting from a confidential client to a public client configuration.
 
+> **Upstream reference:** [FastMCP — Azure (Microsoft Entra ID) OAuth integration guide](https://gofastmcp.com/integrations/azure#azure-microsoft-entra-id-oauth--fastmcp). `AzureProvider` supports both confidential and public clients: omit `client_secret` and supply `jwt_signing_key` to run as a public client with PKCE.
+
 ## What Changes from Step 08
 
 | Setting | Confidential (Step 08) | Public (Step 09) |
@@ -30,7 +32,7 @@ Public clients + PKCE are considered **more secure** than confidential clients f
 
 1. Still in **Authentication**
 2. Click **Add a platform** > **Mobile and desktop applications**
-3. Add redirect URI: `http://localhost:8000/mcp/oauth/callback`
+3. Add redirect URI: `http://localhost:8000/auth/callback` (this is `AzureProvider`'s default redirect path)
 4. (Optional) Remove the **Web** platform if you only want public client flows
 
 ## Step 3: Remove Client Secret (Optional)
@@ -58,7 +60,7 @@ ALLOWED_USERS=alice@university.edu,bob@university.edu
 
 ## PKCE (Proof Key for Code Exchange)
 
-PKCE is automatically handled by FastMCP's OAuthProxy. Here's how it works:
+PKCE is automatically handled by `AzureProvider` (inherited from FastMCP's OAuth proxy). Here's how it works:
 
 1. Client generates a random `code_verifier` (43-128 chars)
 2. Client computes `code_challenge = BASE64URL(SHA256(code_verifier))`
