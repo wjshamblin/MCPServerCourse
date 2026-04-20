@@ -1,27 +1,36 @@
 """
 Step 10: Directory MCP Server with Azure AD On-Behalf-Of (OBO) Flow
 
-Builds on the public-client + security pattern from step 09 by introducing
-OBO token exchange: the server takes the user's MCP access token and
-exchanges it (against Azure AD's `/token` endpoint with the OBO grant)
-for a *new* token usable against Microsoft Graph. We then make Graph
-calls with that token, so Graph sees them as the user, not the app.
+Builds on the auth pattern from steps 08/09 by introducing OBO: the
+server takes the user's MCP access token and exchanges it — against
+Azure's `/token` endpoint with the OBO grant — for a *new* token usable
+against Microsoft Graph. We then call Graph with that token, so Graph
+sees requests as the user, not the app.
 
 Why OBO matters: the alternative — calling Graph with the app's own
 client credentials — would let the server access *any* directory data
-the app is granted, regardless of who's actually calling. With OBO the
-server can only see what the calling user can see, so audit and
+the app has been granted, regardless of who's actually calling. With OBO
+the server can only see what the calling user can see, so audit and
 least-privilege survive across the hop.
 
+Reference:
+  FastMCP Azure OBO guide:
+  https://gofastmcp.com/integrations/azure#on-behalf-of-obo
+
 Pieces on this branch:
-  server.py             this file — auth, OBO wiring, MCP tools
-  token_exchange.py     OBOTokenExchange (cached upstream POST)
+  server.py             this file — AzureProvider + EntraOBOToken wiring
   ms_graph_client.py    thin httpx wrapper around Graph
-  directory_service.py  business logic that ties OBO + Graph together
+  directory_service.py  business logic that calls Graph with the OBO token
   models.py             pydantic types
 
-Endpoints exposed at runtime are the same as step 09 plus the OBO
-exchange happens internally on each tool call.
+What changed vs. the hand-rolled implementation this step shipped with:
+  - `AzureProvider` replaces hand-built `OAuthProxy` + `JWTVerifier`.
+  - Graph scopes move into `additional_authorize_scopes` so they're
+    requested during the initial OAuth consent (required for OBO to work).
+  - `EntraOBOToken([...])` parameter default replaces the hand-rolled
+    `OBOTokenExchange`/cache. Under the hood it uses
+    `azure.identity.aio.OnBehalfOfCredential`, which has its own token
+    cache shared across tool calls.
 
 Run:  python server.py
 
@@ -32,26 +41,25 @@ Required env vars (see .env.example):
                         (User.Read.All, Directory.Read.All) AND your own
                         api://<client_id>/access_as_user scope
   AZURE_CLIENT_SECRET   Client secret value (OBO requires a secret)
-  AZURE_API_SCOPE       default: "access_as_user"
-  GRAPH_SCOPES          space-separated, default:
+  AZURE_API_SCOPE       default: "access_as_user"  (unprefixed —
+                        AzureProvider prepends `api://<client_id>/`)
+  AZURE_GRAPH_SCOPES    space- or comma-separated, default:
                           "https://graph.microsoft.com/User.Read.All
                            https://graph.microsoft.com/Directory.Read.All"
   GRAPH_BASE_URL        default: "https://graph.microsoft.com/beta"
   SERVER_BASE_URL       default: http://localhost:8000
-  OBO_TOKEN_CACHE_TTL   seconds, default 3000
 """
 
 import json
 import logging
 import os
+import re
 
 from dotenv import load_dotenv
 from fastmcp import FastMCP
-from fastmcp.server.auth import OAuthProxy
-from fastmcp.server.auth.providers.jwt import JWTVerifier
+from fastmcp.server.auth.providers.azure import AzureProvider, EntraOBOToken
 from fastmcp.server.dependencies import get_access_token
 
-from token_exchange import OBOTokenExchange, OBOExchangeError
 from ms_graph_client import GraphClient
 from directory_service import DirectoryService
 from models import UserResult
@@ -66,64 +74,79 @@ logger = logging.getLogger(__name__)
 AZURE_TENANT_ID = os.environ.get("AZURE_TENANT_ID", "")
 AZURE_CLIENT_ID = os.environ.get("AZURE_CLIENT_ID", "")
 AZURE_CLIENT_SECRET = os.environ.get("AZURE_CLIENT_SECRET", "")
-AZURE_API_SCOPE = os.environ.get("AZURE_API_SCOPE", "access_as_user")
+AZURE_API_SCOPE_RAW = os.environ.get("AZURE_API_SCOPE", "access_as_user")
 SERVER_BASE_URL = os.environ.get("SERVER_BASE_URL", "http://localhost:8000")
-ADDITIONAL_SCOPES = [
-    s.strip() for s in os.environ.get(
-        "ADDITIONAL_AUTH_SCOPES", "email,openid,profile,offline_access"
-    ).split(",") if s.strip()
-]
-GRAPH_SCOPES = os.environ.get(
-    "GRAPH_SCOPES",
+AZURE_GRAPH_SCOPES_RAW = os.environ.get(
+    "AZURE_GRAPH_SCOPES",
     "https://graph.microsoft.com/User.Read.All https://graph.microsoft.com/Directory.Read.All",
-).split()
+)
 GRAPH_BASE_URL = os.environ.get("GRAPH_BASE_URL", "https://graph.microsoft.com/beta")
-OBO_TOKEN_CACHE_TTL = int(os.environ.get("OBO_TOKEN_CACHE_TTL", "3000"))
 
 if not (AZURE_TENANT_ID and AZURE_CLIENT_ID and AZURE_CLIENT_SECRET):
     raise RuntimeError(
         "AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET must all be set. "
-        "OBO requires a confidential client. See .env.example."
+        "OBO requires a confidential client with a real secret. See .env.example."
     )
 
-FULL_MCP_SCOPE = f"api://{AZURE_CLIENT_ID}/{AZURE_API_SCOPE}"
-TOKEN_ENDPOINT = f"https://login.microsoftonline.com/{AZURE_TENANT_ID}/oauth2/v2.0/token"
+# AZURE_GRAPH_SCOPES can be space- or comma-separated.
+GRAPH_SCOPES: list[str] = [s for s in re.split(r"[\s,]+", AZURE_GRAPH_SCOPES_RAW) if s]
+
+# AzureProvider wants custom API scopes UNPREFIXED; tolerate legacy
+# URI-prefixed/comma-joined values so an old `.env` still works.
+def _normalize_required_scopes() -> list[str]:
+    api_prefix = f"api://{AZURE_CLIENT_ID}/"
+    scopes: list[str] = []
+    for raw in re.split(r"[\s,]+", AZURE_API_SCOPE_RAW):
+        s = raw.strip()
+        if not s:
+            continue
+        if s.startswith(api_prefix):
+            scopes.append(s[len(api_prefix):])
+        elif "://" in s or "/" in s:
+            continue
+        else:
+            scopes.append(s)
+    if not scopes:
+        raise RuntimeError(
+            "AZURE_API_SCOPE must include at least one custom API scope name "
+            "(unprefixed, e.g. 'access_as_user')."
+        )
+    return scopes
 
 
-# === Auth proxy (confidential client; OBO requires a real secret) ===
+REQUIRED_SCOPES = _normalize_required_scopes()
 
-token_verifier = JWTVerifier(
-    jwks_uri=f"https://login.microsoftonline.com/{AZURE_TENANT_ID}/discovery/v2.0/keys",
-    issuer=f"https://login.microsoftonline.com/{AZURE_TENANT_ID}/v2.0",
-    audience=AZURE_CLIENT_ID,
-)
 
-_all_scopes = [FULL_MCP_SCOPE] + ADDITIONAL_SCOPES
+# === Auth provider (AzureProvider — confidential client; OBO requires a secret) ===
+#
+# Graph scopes go into `additional_authorize_scopes` so they're included in
+# the *initial* user consent. Azure only lets us perform OBO for scopes the
+# user has already consented to. The scopes we later pass to
+# `EntraOBOToken(...)` must be a SUBSET of these.
+#
+# See: https://gofastmcp.com/integrations/azure#on-behalf-of-obo
 
-auth = OAuthProxy(
-    upstream_authorization_endpoint=f"https://login.microsoftonline.com/{AZURE_TENANT_ID}/oauth2/v2.0/authorize",
-    upstream_token_endpoint=TOKEN_ENDPOINT,
-    upstream_client_id=AZURE_CLIENT_ID,
-    upstream_client_secret=AZURE_CLIENT_SECRET,
-    valid_scopes=_all_scopes,
-    extra_authorize_params={"scope": " ".join(_all_scopes)},
-    token_verifier=token_verifier,
+auth = AzureProvider(
+    client_id=AZURE_CLIENT_ID,
+    client_secret=AZURE_CLIENT_SECRET,
+    tenant_id=AZURE_TENANT_ID,
+    required_scopes=REQUIRED_SCOPES,
+    additional_authorize_scopes=["openid", "profile", "email", *GRAPH_SCOPES],
     base_url=SERVER_BASE_URL,
 )
-logger.info("Azure OAuth + OBO ready (tenant: %s)", AZURE_TENANT_ID)
+logger.info(
+    "Azure OAuth + OBO ready (tenant: %s, required: %s, graph: %s)",
+    AZURE_TENANT_ID, REQUIRED_SCOPES, GRAPH_SCOPES,
+)
 
 
 # === Services ===
+#
+# No hand-rolled OBO exchange — EntraOBOToken handles it transparently.
+# DirectoryService now receives an already-exchanged Graph token.
 
-obo = OBOTokenExchange(
-    client_id=AZURE_CLIENT_ID,
-    client_secret=AZURE_CLIENT_SECRET,
-    token_endpoint=TOKEN_ENDPOINT,
-    graph_scopes=" ".join(GRAPH_SCOPES),
-    cache_ttl=OBO_TOKEN_CACHE_TTL,
-)
 graph = GraphClient(base_url=GRAPH_BASE_URL)
-directory = DirectoryService(obo=obo, graph=graph)
+directory = DirectoryService(graph=graph)
 
 
 # === MCP server ===
@@ -141,37 +164,31 @@ mcp = FastMCP(
 
 
 @mcp.tool
-async def find_user(query: str) -> str:
+async def find_user(
+    query: str,
+    graph_token: str = EntraOBOToken(GRAPH_SCOPES),
+) -> str:
     """Search the university directory for a person.
 
     Args:
         query: Name, email, or NetID. Up to 10 matching results returned.
     """
-    token = get_access_token()
-    if not token:
-        return json.dumps({"error": "Not authenticated"})
-    try:
-        results = await directory.find_user(token.token, query)
-    except OBOExchangeError as e:
-        return json.dumps({"error": f"OBO exchange failed: {e}. Try re-authenticating."})
+    results = await directory.find_user(graph_token, query)
     users = [UserResult.from_graph(r).model_dump() for r in results]
     return json.dumps({"query": query, "count": len(users), "results": users}, indent=2)
 
 
 @mcp.tool
-async def get_user_groups(user_id: str) -> str:
+async def get_user_groups(
+    user_id: str,
+    graph_token: str = EntraOBOToken(GRAPH_SCOPES),
+) -> str:
     """Get group memberships for a user.
 
     Args:
         user_id: Azure AD object ID (from a find_user result).
     """
-    token = get_access_token()
-    if not token:
-        return json.dumps({"error": "Not authenticated"})
-    try:
-        groups = await directory.get_user_groups(token.token, user_id)
-    except OBOExchangeError as e:
-        return json.dumps({"error": f"OBO exchange failed: {e}"})
+    groups = await directory.get_user_groups(graph_token, user_id)
     return json.dumps({
         "user_id": user_id,
         "count": len(groups),
