@@ -511,41 +511,79 @@ See `docs/azure-setup-step10.md` for the two-app-registration walkthrough.
 
 ---
 
-# Step 11: MCP Apps — Interactive Dashboards
+# Step 11: MCP Apps — Minimal Demo
 
-Adds three interactive MCP Apps on top of the step-10 composed server. Each
-app renders inside compatible MCP clients (Claude Desktop, Cursor, VS Code
-Copilot) via Prefab UI components. Backend tools remain callable by the LLM
+The smallest possible MCP server that demonstrates **MCP Apps**: interactive
+UIs rendered inside the AI client (Claude Desktop, Cursor, VS Code Copilot)
+via Prefab UI components, backed by tools that the LLM can also call
 directly.
 
-## Apps
+Like steps 07–09, this branch deliberately strips earlier-step machinery
+(database, auth, OBO) so the App mechanic is the only new concept.
 
-| App | Purpose |
-|-----|---------|
-| `spending_app` | Department spending dashboard — select department/fiscal year, see budget vs actual by category (bar chart) |
-| `grant_app` | Grant portfolio monitor — filter by sponsor/status, drill into spending per grant |
-| `projection_app` | Grant spending projection — history + projected burn rate (line chart) |
+## What you get
 
-## Architecture
+`server.py` is the only Python file. It exposes:
 
+| Surface | Purpose |
+|---|---|
+| `hello(name)` tool | Plain LLM-callable tool |
+| `add(a, b)` tool | Plain LLM-callable tool |
+| `get_counter()` / `bump_counter(by)` / `reset_counter()` | App-backing tools, callable from BOTH the UI and the LLM |
+| `Counter` app | One-screen interactive UI: live counter with +1 / +10 / Reset / Refresh buttons |
+
+## The MCP Apps pattern
+
+```python
+from fastmcp.apps import FastMCPApp
+from prefab_ui.app import PrefabApp
+from prefab_ui.components import Button, Column, Heading, Metric
+from prefab_ui.actions.mcp import CallTool
+
+counter_app = FastMCPApp("Counter")
+
+@counter_app.tool(model=True)        # callable by UI AND by the LLM
+def bump_counter(by: int = 1) -> dict:
+    ...
+
+@counter_app.ui()                    # the UI entry point
+async def counter_view() -> PrefabApp:
+    with Column(...) as view:
+        Heading("Counter", level=2)
+        Button("+1", on_click=CallTool(bump_counter, arguments={"by": 1}, ...))
+    return view
+
+mcp.add_provider(counter_app)        # register the app on the main server
 ```
-server.py              — Composed entry point (mounts finance + directory)
-financial_server.py    — Finance server + registers the three MCP apps
-financial_apps.py      — PrefabApp definitions (UI + backend tools)
-directory_server.py    — Directory server (from step 10)
-```
+
+Three pieces to internalise:
+
+1. **`FastMCPApp`** bundles a UI + the tools that back it.
+2. **`@app.tool(model=True)`** marks a function as callable by both the UI
+   (via `CallTool` actions) and the LLM directly. (`model=False` would
+   hide it from the LLM — useful for purely UI-internal helpers.)
+3. **`@app.ui()`** returns a Prefab UI component tree. Buttons fire
+   `CallTool(...)` actions, which round-trip back through MCP to invoke
+   the matching tool, then update UI state with `SetState(...)`.
 
 ## Running
 
 ```bash
-uv run python server.py
+uv sync
+python server.py
 ```
 
-Clients that support MCP Apps will render the dashboards inline; clients that
-don't still see the `finance_*` and `directory_*` tools as normal MCP tools.
+Connect from Claude Desktop, Cursor, or VS Code Copilot. Clients that
+support MCP Apps will offer to open the **Counter** app; clients that
+don't still see the underlying tools and can call them directly.
 
-## New Dependencies
+## Adding auth
 
-- `fastmcp[apps]` — Apps extension
-- `prefab-ui` — Declarative UI components
-- `diskcache`, `pathvalidate` — app storage helpers
+This demo runs unauthenticated so you can poke at the UI without
+configuring a tenant. Drop in any `auth=...` block from steps 07–10 and
+you're done — the Apps mechanic is orthogonal to auth.
+
+## New dependencies
+
+- `fastmcp[apps]` — the Apps extension to FastMCP
+- `prefab-ui` — declarative UI components
