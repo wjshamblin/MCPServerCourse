@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Step 09: Public Client + Security Hardening</title>
+<title>Step 09: Public Client + PKCE + Security Add-Ons</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reset.min.css">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reveal.min.css">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/theme/night.min.css">
@@ -35,140 +35,227 @@
 <!-- Slide 1: Title -->
 <section>
   <h1>Step 09</h1>
-  <h2>Public Client + Security Hardening</h2>
-  <p class="highlight">PKCE, allowlists, and audit logging</p>
+  <h2>Public Client + PKCE + Security Add-Ons</h2>
+  <p>What to do when the server can't hold a secret</p>
 </section>
 
-<!-- Slide 2: Confidential vs Public Clients -->
+<!-- Slide 2: What changes vs step 08 -->
 <section>
-  <h2>Confidential vs Public Clients</h2>
-  <table>
-    <thead>
-      <tr><th></th><th>Confidential (Step 08)</th><th>Public (Step 09)</th></tr>
-    </thead>
-    <tbody>
-      <tr><td>Client Secret</td><td>Required</td><td>Not used</td></tr>
-      <tr><td>PKCE</td><td>Optional</td><td>Required (automatic)</td></tr>
-      <tr><td>Platform</td><td>Web</td><td>Mobile / Desktop</td></tr>
-      <tr><td>Security</td><td>Secret proves identity</td><td>PKCE proves origin</td></tr>
-      <tr><td>Use case</td><td>Server-side apps</td><td>Desktop, CLI, SPA</td></tr>
-    </tbody>
+  <h2>What Changes vs Step 08</h2>
+  <ul>
+    <li>Drop <code>upstream_client_secret</code> &mdash; this is a <em>public</em> client</li>
+    <li>Azure validates request integrity with <strong>PKCE</strong> instead of a secret</li>
+    <li>FastMCP needs a local <code>jwt_signing_key</code> to mint tokens for downstream MCP clients</li>
+    <li>Add two production concerns that naturally live here:
+      <ul>
+        <li>User <strong>allowlist</strong> on privileged tools</li>
+        <li><strong>Tamper-detected audit log</strong> (SHA-256 hash chain)</li>
+      </ul>
+    </li>
+  </ul>
+</section>
+
+<!-- Slide 3: Confidential vs public -->
+<section>
+  <h2>Confidential vs Public</h2>
+  <table class="small">
+    <tr><th></th><th>Confidential (08)</th><th>Public (09)</th></tr>
+    <tr><td>Has <code>client_secret</code>?</td><td>Yes, server-side</td><td>No</td></tr>
+    <tr><td>Proof-of-possession</td><td>Secret at <code>/token</code></td><td>PKCE code_verifier</td></tr>
+    <tr><td>Azure app type</td><td>Web</td><td>Mobile &amp; desktop</td></tr>
+    <tr><td>When to use</td><td>Trusted server w/ secret store</td><td>Cannot safely ship a secret</td></tr>
+    <tr><td>Token flow</td><td>code + secret &rarr; tokens</td><td>code + verifier &rarr; tokens</td></tr>
   </table>
 </section>
 
-<!-- Slide 3: When to use Public Clients -->
+<!-- Slide 4: PKCE in one slide -->
 <section>
-  <h2>When to Use Public Clients</h2>
+  <h2>PKCE in One Slide</h2>
+  <pre class="small" style="text-align: left; box-shadow: none;">
+1. Client picks a random code_verifier
+2. Client sends SHA256(code_verifier) as code_challenge on /authorize
+3. Azure stashes the challenge alongside the issued auth code
+4. Client sends the raw code_verifier on /token
+5. Azure checks SHA256(code_verifier) == stored challenge
+   → only the original caller can redeem the code
+  </pre>
+  <p class="small">FastMCP's <code>OAuthProxy</code> does steps 2+4 automatically (<code>forward_pkce=True</code> by default).</p>
+</section>
+
+<!-- Slide 5: Register as a public client -->
+<section>
+  <h2>Register as a Public Client</h2>
+  <ol>
+    <li>Portal &rarr; App registrations &rarr; <strong>New registration</strong></li>
+    <li>Platform: <strong>Mobile and desktop applications</strong></li>
+    <li>Redirect URI: <code>http://localhost:8000/callback</code></li>
+    <li><strong>Authentication</strong> &rarr; turn on "Allow public client flows"</li>
+    <li><strong>Expose an API</strong> &rarr; scope <code>access_as_user</code></li>
+    <li>Do <em>not</em> create a client secret</li>
+  </ol>
+</section>
+
+<!-- Slide 6: Env vars -->
+<section>
+  <h2>Env Vars</h2>
+  <pre><code class="language-bash" data-trim data-noescape>
+AZURE_TENANT_ID=&lt;tenant id&gt;
+AZURE_CLIENT_ID=&lt;application id&gt;
+# note: no AZURE_CLIENT_SECRET
+
+AZURE_API_SCOPE=access_as_user
+SERVER_BASE_URL=http://localhost:8000
+ADDITIONAL_AUTH_SCOPES=email,openid,profile,offline_access
+
+# NEW for public client:
+JWT_SIGNING_KEY=&lt;output of python -c "import secrets; print(secrets.token_urlsafe(32))"&gt;
+
+# NEW for security add-ons:
+ALLOWED_USERS=alice@example.com,bob@example.com
+AUDIT_LOG_DIR=logs
+  </code></pre>
+</section>
+
+<!-- Slide 7: jwt_signing_key -->
+<section>
+  <h2>Why <code>jwt_signing_key</code>?</h2>
   <ul>
-    <li>Can't securely store a client secret (desktop apps, CLI tools)</li>
-    <li>Want to eliminate secret rotation overhead</li>
-    <li>PKCE provides sufficient security</li>
-    <li>Actually <span class="highlight">MORE secure</span> than confidential in some cases &mdash; no secret to leak!</li>
+    <li>In step 08 the MCP-facing token was essentially the Azure JWT (secret-backed trust)</li>
+    <li>Public clients can't issue that trust end-to-end, so FastMCP <em>mints its own</em> short-lived JWT for the MCP client</li>
+    <li>That JWT needs a symmetric signing key &mdash; that's <code>jwt_signing_key</code></li>
+    <li>Without it, <code>OAuthProxy</code> raises at startup: <code class="small">"jwt_signing_key is required when upstream_client_secret is not provided"</code></li>
   </ul>
 </section>
 
-<!-- Slide 4: PKCE: Proof Key for Code Exchange -->
+<!-- Slide 8: Auth block -->
 <section>
-  <h2>PKCE: Proof Key for Code Exchange</h2>
-  <pre><code class="language-text">1. Client generates random code_verifier
-2. Client computes code_challenge = SHA256(code_verifier)
-3. Auth request includes code_challenge
-4. Token exchange includes code_verifier
-5. Server verifies: SHA256(verifier) == challenge</code></pre>
-  <p>Prevents authorization code interception &mdash; attacker needs the verifier.</p>
-  <p class="small">FastMCP handles this automatically.</p>
+  <h2>Auth Block</h2>
+  <pre><code class="python" data-trim data-noescape>
+token_verifier = JWTVerifier(
+    jwks_uri=f"https://login.microsoftonline.com/{TENANT}/discovery/v2.0/keys",
+    issuer =f"https://login.microsoftonline.com/{TENANT}/v2.0",
+    audience=CLIENT_ID,
+)
+
+scopes = [f"api://{CLIENT_ID}/access_as_user",
+          "email", "openid", "profile", "offline_access"]
+
+auth = OAuthProxy(
+    upstream_authorization_endpoint=f".../authorize",
+    upstream_token_endpoint         =f".../token",
+    upstream_client_id              =CLIENT_ID,
+    # no upstream_client_secret
+    valid_scopes                    =scopes,
+    extra_authorize_params          ={"scope": " ".join(scopes)},
+    token_verifier                  =token_verifier,
+    base_url                        =SERVER_BASE_URL,
+    jwt_signing_key                 =JWT_SIGNING_KEY,   # NEW
+)
+  </code></pre>
 </section>
 
-<!-- Slide 5: Azure Portal Changes -->
+<!-- Slide 9: Allowlist pattern -->
 <section>
-  <h2>Azure Portal Changes</h2>
-  <p class="small">Changes from Step 08:</p>
-  <ul>
-    <li>Authentication &rarr; Allow public client flows &rarr; <strong>Yes</strong></li>
-    <li>Add platform: <span class="highlight">Mobile and desktop applications</span></li>
-    <li>Redirect URI: <code>http://localhost:8000/mcp/oauth/callback</code></li>
-    <li>Optionally remove client secret</li>
-  </ul>
-</section>
+  <h2>Allowlist Pattern</h2>
+  <pre><code class="python" data-trim data-noescape>
+ALLOWED_USERS = [e.strip().lower()
+                 for e in os.environ.get("ALLOWED_USERS", "").split(",")
+                 if e.strip()]
 
-<!-- Slide 6: User Allowlist -->
-<section>
-  <h2>User Allowlist</h2>
-  <p><em>Authorization after authentication</em></p>
-  <pre><code class="language-python">ALLOWED_USERS=alice@duke.edu,bob@duke.edu
+def caller_email() -> str:
+    tok = get_access_token()
+    if tok is None: return ""
+    c = tok.claims
+    return (c.get("upn") or c.get("preferred_username")
+            or c.get("email") or "").lower()
 
 def check_user_allowed(email: str) -> bool:
-    allowed = config.allowed_users_list
-    if not allowed:
-        return True  # empty = allow all
-    return email.lower() in allowed</code></pre>
-  <p><span class="highlight">Authentication</span> = who are you?<br>
-     <span class="highlight">Authorization</span> = are you allowed?</p>
+    # Empty allowlist = allow any authenticated user
+    return not ALLOWED_USERS or email in ALLOWED_USERS
+  </code></pre>
+  <p class="small">Authentication answers "who is this?"; the allowlist answers "are they allowed to do <em>this</em>?"</p>
 </section>
 
-<!-- Slide 7: Audit Logging: Why? -->
+<!-- Slide 10: The privileged tool -->
 <section>
-  <h2>Audit Logging: Why?</h2>
+  <h2>A Privileged Tool</h2>
+  <pre><code class="python" data-trim data-noescape>
+@mcp.tool
+def privileged_action(message: str) -> dict:
+    email = caller_email()
+    if not check_user_allowed(email):
+        audit.log(email or "&lt;unknown&gt;", "DENIED",
+                  f"privileged_action: {message[:200]}")
+        return {"error": "not authorized", "user": email}
+
+    audit.log(email, "ALLOWED",
+              f"privileged_action: {message[:200]}")
+    return {"ok": True, "user": email, "echoed": message}
+  </code></pre>
   <ul>
-    <li>Compliance requirements (FERPA, SOX, HIPAA)</li>
-    <li>Forensics: who queried what, when?</li>
-    <li>Tamper detection: were logs modified?</li>
-    <li>We need: <span class="highlight">append-only, verifiable, timestamped</span></li>
+    <li>Extract identity from the token</li>
+    <li>Gate on the allowlist</li>
+    <li>Audit <strong>both</strong> outcomes &mdash; denials matter too</li>
   </ul>
 </section>
 
-<!-- Slide 8: Hash Chain Integrity -->
+<!-- Slide 11: Audit hash chain -->
 <section>
-  <h2>Hash Chain Integrity</h2>
-  <pre><code class="language-text">Entry 1: {data, hash: SHA256(data), previous_hash: "GENESIS"}
-Entry 2: {data, hash: SHA256(data), previous_hash: entry1.hash}
-Entry 3: {data, hash: SHA256(data), previous_hash: entry2.hash}</code></pre>
-  <p>If <strong>ANY</strong> entry is modified or deleted, the chain breaks.</p>
-  <p><code>verify_chain()</code> detects tampering.</p>
+  <h2>Tamper-Detected Audit Log</h2>
+  <ul>
+    <li>Every entry = JSON line with <code>timestamp, user, action, details, prev_hash, hash</code></li>
+    <li><code>hash = SHA256(prev_hash || json_of(this_entry_without_hash))</code></li>
+    <li>Changing or deleting any past line breaks every subsequent <code>hash</code></li>
+    <li>Exposed to clients via <code>audit://verify</code>:</li>
+  </ul>
+  <pre><code class="python" data-trim data-noescape>
+@mcp.resource("audit://verify")
+def verify_audit_chain() -> dict:
+    valid, count = audit.verify_chain()
+    return {"valid": valid, "entries": count}
+  </code></pre>
+  <p class="small">This is integrity, not confidentiality. A sufficiently motivated attacker with write access could rewrite the whole chain &mdash; in production, ship entries to append-only storage.</p>
 </section>
 
-<!-- Slide 9: Audit Logger -->
+<!-- Slide 12: Tool surface -->
 <section>
-  <h2>Audit Logger</h2>
-  <pre><code class="language-python">class AuditLogger:
-    def log(self, user_email, action, detail="", result_count=0):
-        entry = {
-            "timestamp": datetime.now(UTC).isoformat(),
-            "user": user_email,
-            "action": action,    # QUERY, DENIED, NL_QUERY
-            "detail": detail[:500],
-            "previous_hash": self._previous_hash,
-        }
-        entry["hash"] = SHA256(entry)
-        # Append to JSONL file with fsync</code></pre>
+  <h2>Tool &amp; Resource Surface</h2>
+  <table class="small">
+    <tr><th>Name</th><th>Auth</th><th>Allowlist</th><th>Audit</th></tr>
+    <tr><td><code>hello</code></td><td>Required</td><td>No</td><td>No</td></tr>
+    <tr><td><code>whoami</code></td><td>Required</td><td>No</td><td>No</td></tr>
+    <tr><td><code>privileged_action</code></td><td>Required</td><td><strong>Yes</strong></td><td><strong>Yes</strong></td></tr>
+    <tr><td><code>user://me</code></td><td>Required</td><td>No</td><td>No</td></tr>
+    <tr><td><code>audit://verify</code></td><td>Required</td><td>No</td><td>No</td></tr>
+  </table>
 </section>
 
-<!-- Slide 10: Integrating Audit with Tools -->
+<!-- Slide 13: Run it -->
 <section>
-  <h2>Integrating Audit with Tools</h2>
-  <pre><code class="language-python">@mcp.tool
-async def query_sql(sql: str, ctx: Context) -> str:
-    user_email = get_user_email()
-    if not check_user_allowed(user_email):
-        audit.log(user_email, "DENIED", sql[:200])
-        return {"error": "Access denied"}
-
-    rows, total = await db.execute_query(sql)
-    audit.log(user_email, "QUERY", sql[:200], result_count=total)
-    return results</code></pre>
+  <h2>Run It</h2>
+  <pre><code class="language-bash" data-trim data-noescape>
+cp .env.example .env
+# set AZURE_TENANT_ID / AZURE_CLIENT_ID (no secret!)
+# generate JWT_SIGNING_KEY:
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+# add one or more emails to ALLOWED_USERS
+uv sync
+python server.py
+  </code></pre>
+  <p class="small">Smoke test: call <code>privileged_action</code> with an allowed email &rarr; check <code>logs/audit-YYYY-MM.jsonl</code> and then <code>audit://verify</code>.</p>
 </section>
 
-<!-- Slide 11: Key Takeaways -->
+<!-- Slide 14: Key takeaways -->
 <section>
   <h2>Key Takeaways</h2>
   <ul>
-    <li><strong>Public clients + PKCE:</strong> no secret to manage or leak</li>
-    <li><strong>User allowlist:</strong> simple but effective authorization</li>
-    <li><strong>Audit logging with hash chain:</strong> tamper-detected, append-only</li>
-    <li><strong>Defense in depth:</strong> authentication + authorization + audit</li>
+    <li>Public client = no secret; PKCE proves identity end-to-end</li>
+    <li><code>jwt_signing_key</code> is required because FastMCP mints its own token</li>
+    <li>Authentication and authorization are <em>different</em> questions &mdash; allowlist solves the second</li>
+    <li>Audit both allowed and denied calls; a hash chain makes silent tampering detectable</li>
+    <li>Still one file, still minimal &mdash; auth lessons end here</li>
   </ul>
-  <p class="small" style="margin-top: 0.5em;"><strong>Note:</strong> These security patterns (allowlist, audit) also apply to Duke OIDC (Step 07)</p>
-  <p class="highlight" style="margin-top: 0.5em;">Next: OBO flow for downstream APIs &rarr;</p>
+  <p class="small" style="margin-top: 0.5em;">Next: step 10 uses confidential-client auth as the foundation for On-Behalf-Of calls to Microsoft Graph.</p>
 </section>
 
 </div>
@@ -177,10 +264,7 @@ async def query_sql(sql: str, ctx: Context) -> str:
 <script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/plugin/highlight/highlight.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/plugin/notes/notes.min.js"></script>
 <script>
-Reveal.initialize({
-  hash: true,
-  plugins: [RevealHighlight, RevealNotes]
-});
+Reveal.initialize({ hash: true, plugins: [RevealHighlight, RevealNotes] });
 </script>
 </body>
 </html>
