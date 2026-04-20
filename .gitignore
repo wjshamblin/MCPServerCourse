@@ -14,3 +14,5 @@ dist/
 build/
 logs/
 uv.lock
+.DS_Store
+.playwright-mcp/
