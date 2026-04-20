@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Step 11: MCP Apps</title>
+<title>Step 11: Minimal MCP Apps Demo</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reset.min.css">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reveal.min.css">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/theme/night.min.css">
@@ -35,153 +35,223 @@
 <!-- Slide 1: Title -->
 <section>
   <h1>Step 11</h1>
-  <h2>MCP Apps</h2>
-  <p>Interactive dashboards inside the conversation</p>
+  <h2>MCP Apps &mdash; Interactive UIs</h2>
+  <p>A Counter, end-to-end, in about 180 lines</p>
 </section>
 
-<!-- Slide 2: What are MCP Apps? -->
+<!-- Slide 2: What is an MCP App -->
 <section>
-  <h2>What are MCP Apps?</h2>
+  <h2>What Is an MCP App?</h2>
   <ul>
-    <li>Tools that return <span class="highlight">interactive HTML UIs</span> rendered in the chat</li>
-    <li>Not separate web apps &mdash; they live <em>inside</em> the conversation</li>
-    <li>Sandboxed iframe with bidirectional communication</li>
-    <li>Supported by Claude, Claude Desktop, VS Code Copilot, Goose</li>
+    <li>An <em>interactive UI panel</em> that renders inside the AI client (Claude Desktop, Cursor, VS Code Copilot)</li>
+    <li>Declared server-side, rendered client-side</li>
+    <li>Buttons / inputs fire actions that round-trip back to your MCP server as tool calls</li>
+    <li>The same tools the App uses are <em>also</em> callable by the LLM directly</li>
+  </ul>
+  <p class="small">Think "renderable tool surface" rather than "web app".</p>
+</section>
+
+<!-- Slide 3: Back to minimal -->
+<section>
+  <h2>Back to Minimal</h2>
+  <ul>
+    <li>Auth, allowlisting, OBO, and the financial + directory servers are all gone from this branch</li>
+    <li>Just <code>server.py</code> + one App (Counter) so the new mechanic is on the page by itself</li>
+    <li>An explicit <code>auth = None</code> stub marks where to drop in a step-07 / 08 / 09 / 10 auth block</li>
   </ul>
 </section>
 
-<!-- Slide 3: Why not just a web app? -->
+<!-- Slide 4: The four-step pattern -->
 <section>
-  <h2>Why not just a web app?</h2>
-  <ul>
-    <li><span class="highlight">Context preservation</span> &mdash; UI lives in the conversation</li>
-    <li><span class="highlight">Bidirectional data flow</span> &mdash; app calls server tools</li>
-    <li><span class="highlight">Security</span> &mdash; sandboxed iframe, no cookie/DOM access</li>
-    <li><span class="highlight">No separate auth</span> &mdash; uses existing MCP session</li>
-  </ul>
+  <h2>The Four-Step Pattern</h2>
+  <ol>
+    <li>Create a <code>FastMCPApp</code> &mdash; it bundles UI + backing tools</li>
+    <li>Decorate each backing function with <code>@app.tool(model=True)</code> so it's callable from the UI <em>and</em> from the LLM directly</li>
+    <li>Decorate the UI entry point with <code>@app.ui()</code>; return a <code>PrefabApp</code> layout built from <code>prefab_ui.components</code></li>
+    <li>Register on the main server: <code>mcp.add_provider(app)</code></li>
+  </ol>
 </section>
 
-<!-- Slide 4: Two approaches in FastMCP -->
+<!-- Slide 5: Imports -->
 <section>
-  <h2>Two Approaches in FastMCP</h2>
-  <table>
-    <tr><th>Pattern</th><th>When to use</th><th>Decorator</th></tr>
-    <tr>
-      <td><code>app=True</code></td>
-      <td>Simple charts, single data fetch</td>
-      <td><code>@mcp.tool(app=True)</code></td>
-    </tr>
-    <tr>
-      <td><code>FastMCPApp</code></td>
-      <td>Backend tools, forms, drill-down</td>
-      <td><code>@app.ui()</code> + <code>@app.tool()</code></td>
-    </tr>
-  </table>
+  <h2>Imports</h2>
+  <pre><code class="python" data-trim data-noescape>
+from fastmcp import FastMCP
+from fastmcp.apps import FastMCPApp
+from prefab_ui.app import PrefabApp
+from prefab_ui.components import (
+    Button, Column, Heading, Metric, Row, Separator, Text,
+)
+from prefab_ui.actions import SetState, ShowToast
+from prefab_ui.actions.mcp import CallTool
+from prefab_ui.rx import RESULT, Rx, STATE
+  </code></pre>
+  <p class="small">Prefab UI ships with the <code>fastmcp[apps]</code> extra.</p>
 </section>
 
-<!-- Slide 5: App 1: Spending Dashboard -->
+<!-- Slide 6: Plain tools first -->
 <section>
-  <h2>App 1: Spending Dashboard</h2>
-  <pre><code class="language-python">@mcp.tool(app=True)
-async def spending_dashboard(
-    department_code: str, fiscal_year: int = 2025
-) -> PrefabApp:
-    data = await get_department_spending(...)
+  <h2>Plain Tools First</h2>
+  <pre><code class="python" data-trim data-noescape>
+mcp = FastMCP(
+    "MCPAppsDemo",
+    instructions=(
+        "Minimal MCP Apps demo. Open the 'Counter' app to interact "
+        "with it, or call hello() / add() / bump_counter() directly."
+    ),
+    auth=None,   # swap in a step-07..10 auth block here
+)
+
+@mcp.tool
+def hello(name: str = "world") -> str:
+    return f"hello, {name}!"
+
+@mcp.tool
+def add(a: int, b: int) -> int:
+    return a + b
+  </code></pre>
+  <p class="small">Nothing special &mdash; Apps are additive, not a replacement.</p>
+</section>
+
+<!-- Slide 7: The Counter app: tools -->
+<section>
+  <h2>Counter App &mdash; Backing Tools</h2>
+  <pre><code class="python" data-trim data-noescape>
+_state: dict[str, int] = {"count": 0}   # demo-only; in-memory
+counter_app = FastMCPApp("Counter")
+
+@counter_app.tool(model=True)
+def get_counter() -> dict:
+    return {"count": _state["count"]}
+
+@counter_app.tool(model=True)
+def bump_counter(by: int = 1) -> dict:
+    _state["count"] += by
+    return {"count": _state["count"], "delta": by}
+
+@counter_app.tool(model=True)
+def reset_counter() -> dict:
+    _state["count"] = 0
+    return {"count": 0}
+  </code></pre>
+  <p class="small"><code>model=True</code> = the LLM can also call these. The UI will call them via <code>CallTool(...)</code>.</p>
+</section>
+
+<!-- Slide 8: The Counter app: UI -->
+<section>
+  <h2>Counter App &mdash; UI</h2>
+  <pre><code class="python" data-trim data-noescape>
+@counter_app.ui()
+async def counter_view() -> PrefabApp:
     with Column(gap=4, css_class="p-6") as view:
-        Heading(f"{dept} — FY{year} Spending")
-        BarChart(
-            data=chart_data,
-            series=[
-                ChartSeries(data_key="actual", label="Actual"),
-                ChartSeries(data_key="budget", label="Budget"),
-            ],
-            x_axis="category",
-        )
-    return PrefabApp(view=view)</code></pre>
+        Heading("Counter", level=2)
+        Text("A shared in-memory counter. Click a button (or just ask "
+             "the model to bump it) and watch the value update.",
+             css_class="text-gray-400 text-sm")
+        Separator()
+        with Row(gap=8, css_class="items-center"):
+            Metric(label="Count", value=Rx("count"))
+        with Row(gap=2):
+            Button("Refresh",
+                on_click=CallTool(get_counter,
+                    on_success=[SetState("count", RESULT["count"])]))
+            Button("+1",
+                on_click=CallTool(bump_counter, arguments={"by": 1},
+                    on_success=[
+                        SetState("count", RESULT["count"]),
+                        ShowToast("+1", variant="success")]))
+            # +10 and Reset elided for space
+    return view
+
+mcp.add_provider(counter_app)
+  </code></pre>
 </section>
 
-<!-- Slide 6: Prefab UI Components -->
+<!-- Slide 9: Reactive state cheat sheet -->
 <section>
-  <h2>Prefab UI Components</h2>
+  <h2>Reactive State Cheat Sheet</h2>
+  <table>
+    <tr><th>Helper</th><th>Meaning</th></tr>
+    <tr><td><code>STATE</code></td><td>Root of the client-side reactive store</td></tr>
+    <tr><td><code>Rx("count")</code></td><td>Bind a component value to <code>STATE.count</code></td></tr>
+    <tr><td><code>RESULT</code></td><td>The tool-call return payload, inside <code>on_success</code></td></tr>
+    <tr><td><code>SetState("count", RESULT["count"])</code></td><td>Copy <code>result.count</code> into <code>STATE.count</code></td></tr>
+    <tr><td><code>ShowToast("...", variant=...)</code></td><td>Fire a user-visible toast</td></tr>
+  </table>
+  <p class="small">Actions compose &mdash; multiple entries in <code>on_success</code> run in order.</p>
+</section>
+
+<!-- Slide 10: Call-tool round trip -->
+<section>
+  <h2>The Click Round-Trip</h2>
+  <pre class="small" style="text-align: left; box-shadow: none;">
+User clicks "+1"
+       │
+       ▼
+CallTool(bump_counter, arguments={"by": 1})
+       │         (sent over MCP to our server)
+       ▼
+@counter_app.tool bump_counter(by=1)
+       │
+       ▼
+Returns {"count": 42, "delta": 1}
+       │
+       ▼
+on_success:
+   SetState("count", RESULT["count"])   # STATE.count = 42
+   ShowToast("+1", variant="success")
+       │
+       ▼
+UI re-renders: Metric shows 42
+  </pre>
+</section>
+
+<!-- Slide 11: Models and Apps together -->
+<section>
+  <h2>Models and Apps Coexist</h2>
   <ul>
-    <li><strong>Layout:</strong> Column, Row, Separator</li>
-    <li><strong>Content:</strong> Heading, Text, Badge</li>
-    <li><strong>Logic:</strong> ForEach, If, Form, Select, Button</li>
-    <li><strong>Charts:</strong> BarChart, LineChart, AreaChart, ChartSeries</li>
-    <li><strong>Actions:</strong> CallTool, SetState, ShowToast</li>
-  </ul>
-  <p class="small"><code>pip install "fastmcp[apps]"</code> + <code>prefab-ui</code></p>
-</section>
-
-<!-- Slide 7: App 2: Grant Portfolio (concept) -->
-<section>
-  <h2>App 2: Grant Portfolio</h2>
-  <ul>
-    <li><code>FastMCPApp</code> pattern &mdash; separate UI and backend tools</li>
-    <li><code>@app.ui()</code> &mdash; the entry point the LLM calls</li>
-    <li><code>@app.tool()</code> &mdash; backend tools the UI calls via <code>CallTool</code></li>
-    <li>Click a grant &rarr; <code>CallTool(get_grant_detail)</code> &rarr; updates state</li>
-  </ul>
-</section>
-
-<!-- Slide 8: FastMCPApp pattern -->
-<section>
-  <h2>FastMCPApp Pattern</h2>
-  <pre><code class="language-python">grant_app = FastMCPApp("GrantPortfolio")
-
-grant_app = FastMCPApp("GrantPortfolio")
-
-@grant_app.tool(model=True)
-async def get_grants(sponsor_filter: str = "") -> list[dict]:
-    ...  # Query database
-
-@grant_app.ui()
-async def grant_portfolio() -> PrefabApp:
-    with Column() as view:
-        with Form(on_submit=CallTool(
-            get_grants,
-            arguments={"sponsor_filter": STATE.sponsor_filter},
-            on_success=[SetState("grants", RESULT)],
-        )):
-            Select(name="sponsor_filter", ...)
-            Button("Filter")
-    initial = await get_grants(status_filter="active")
-    return PrefabApp(view=view, state={"grants": initial})</code></pre>
-</section>
-
-<!-- Slide 9: CallTool: UI → Server -->
-<section>
-  <h2>CallTool: UI &rarr; Server</h2>
-  <pre><code class="language-text">User clicks grant card in UI
-    → CallTool(get_grant_detail, {grant_id: "NSF-123"})
-    → Server executes query
-    → SetState("detail", RESULT)
-    → UI updates with spending chart + transactions</code></pre>
-  <p>No page reload. No separate API. MCP handles it.</p>
-</section>
-
-<!-- Slide 10: Adding Duke OIDC Auth -->
-<section>
-  <h2>Adding Duke OIDC Auth</h2>
-  <ul>
-    <li>Same <code>OIDCProxy</code> + <code>IntrospectionTokenVerifier</code> pattern</li>
-    <li>Auth is <span class="highlight">optional</span> (disabled when OIDC vars are empty)</li>
-    <li>Apps inherit the server's auth &mdash; no extra config</li>
-    <li><code>get_authenticated_user</code> tool available</li>
+    <li>Because <code>model=True</code>, the LLM can say "bump the counter by 5" and <code>bump_counter</code> runs the same way a button click would</li>
+    <li>UI and LLM share state: click +1, then ask the model for the value &rarr; it sees 1</li>
+    <li>This is the superpower of MCP Apps &mdash; humans and models share the surface</li>
   </ul>
 </section>
 
-<!-- Slide 11: Key Takeaways -->
+<!-- Slide 12: Run it -->
+<section>
+  <h2>Run It</h2>
+  <pre><code class="language-bash" data-trim data-noescape>
+uv sync
+python server.py
+  </code></pre>
+  <ul>
+    <li>No env vars required &mdash; <code>auth=None</code></li>
+    <li>Connect from Claude Desktop / Cursor / VS Code Copilot</li>
+    <li>Open the <strong>Counter</strong> App from the client's App picker</li>
+    <li>Or just prompt: "bump the counter by 3 and tell me the new value"</li>
+  </ul>
+</section>
+
+<!-- Slide 13: Where to go next -->
+<section>
+  <h2>Where to Go Next</h2>
+  <ul>
+    <li>Gate the App by replacing <code>auth = None</code> with any auth block from steps 07 &ndash; 10</li>
+    <li>Persist <code>_state</code> somewhere real (sqlite, redis) once you stop throwing the server away between restarts</li>
+    <li>Add a second <code>FastMCPApp</code> to see that the plumbing scales &mdash; each app is independent</li>
+    <li>Browse <code>prefab_ui.components</code> for tables, charts, forms, inputs</li>
+  </ul>
+</section>
+
+<!-- Slide 14: Key takeaways -->
 <section>
   <h2>Key Takeaways</h2>
   <ul>
-    <li><code>FastMCPApp</code> with <code>@app.ui()</code> + <code>@app.tool(model=True)</code></li>
-    <li><code>Form</code> + <code>Select</code> + <code>CallTool(fn, arguments={...STATE})</code></li>
-    <li>Use <code>STATE.field_name</code> to pass form values to tools</li>
-    <li>Prefab UI: charts, cards, metrics, progress bars, forms</li>
-    <li>Apps inherit server auth &mdash; secure by default</li>
+    <li>An MCP App = UI + tools that round-trip through MCP</li>
+    <li>One file can ship many Apps via <code>mcp.add_provider(app)</code></li>
+    <li><code>model=True</code> tools are reachable from both the UI and the LLM &mdash; use that</li>
+    <li>Prefab UI state is reactive: <code>Rx</code> reads, <code>SetState</code> writes, <code>RESULT</code> is what the tool returned</li>
+    <li>This branch closes the course &mdash; auth + real work + interactive UI are all on the table</li>
   </ul>
-  <p style="margin-top: 1em;">This is the final step of the course.</p>
 </section>
 
 </div>
@@ -190,10 +260,7 @@ async def grant_portfolio() -> PrefabApp:
 <script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/plugin/highlight/highlight.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/plugin/notes/notes.min.js"></script>
 <script>
-Reveal.initialize({
-  hash: true,
-  plugins: [RevealHighlight, RevealNotes]
-});
+Reveal.initialize({ hash: true, plugins: [RevealHighlight, RevealNotes] });
 </script>
 </body>
 </html>
