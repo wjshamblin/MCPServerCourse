@@ -472,39 +472,61 @@ See `docs/azure-setup-step09.md` for Azure Portal changes.
 
 ---
 
-## Step 10: OBO Flow — Directory Server
+## Step 10: Directory MCP Server with Azure AD On-Behalf-Of (OBO)
 
-The final step: a directory lookup server that calls Microsoft Graph on behalf of the user.
+This branch promotes a real, substantive demo: a directory-lookup server
+that calls Microsoft Graph **on behalf of** the signed-in user. OBO is
+the production-grade pattern that lets a multi-tier app preserve user
+identity (and permissions) across an upstream API call.
 
-### On-Behalf-Of (OBO) Flow
+### Why OBO matters
 
-The user authenticates once. The server exchanges their token for a Graph API token:
+The naive alternative is for the server to call Graph with its *own*
+client credentials. That works, but Graph then sees every call as the
+app — the server can read anything the app is granted, regardless of
+who's actually calling. OBO instead exchanges the user's MCP access
+token for a *new* Graph token issued to the user, so Graph enforces the
+caller's permissions and audit trails stay coherent end to end.
 
 ```
-User token (api://app/access_as_user) -> OBO exchange -> Graph token (User.Read.All)
+MCP client → Server (api://<app>/access_as_user token)
+              │
+              └── POST /token  grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer
+                  with: assertion=<user MCP token>, requested_token_use=on_behalf_of
+              ↓
+              Graph token scoped to User.Read.All / Directory.Read.All for THIS user
+              ↓
+              GET https://graph.microsoft.com/v1.0/users?$search=...
 ```
 
-### Architecture
+### Pieces on this branch
 
-```
-directory_server.py    — MCP server with auth
-token_exchange.py      — OBO token cache and exchange
-ms_graph_client.py     — Graph API wrapper
-directory_service.py   — Business logic layer
-models.py              — Pydantic models for results
-```
+| File | Purpose |
+|---|---|
+| `server.py` | Auth wiring, OBO setup, MCP tools |
+| `token_exchange.py` | `OBOTokenExchange` — cached upstream POST against Azure's `/token` |
+| `ms_graph_client.py` | Thin `httpx.AsyncClient` wrapper for Graph |
+| `directory_service.py` | Business logic that ties OBO + Graph together |
+| `models.py` | Pydantic types for Graph results |
 
-### Tools
+### Tools / resources
 
-- `find_user(query)` — Search by name, email, or NetID
-- `get_user_groups(user_id)` — Get group memberships
-- `get_authenticated_user()` — Current user info
-- `health_check()` — Service status
+- `find_user(query)` — search Graph by name, email, or NetID (up to 10 results)
+- `get_user_groups(user_id)` — list group memberships for a user
+- `whoami()` — identity claims for the current caller
+- `directory://auth/user` resource — same identity, exposed as a resource
 
-### Composed Server
+### Setup
 
-`server.py` mounts both financial + directory servers:
-- `finance_query_sql`, `finance_ask` — financial tools
-- `directory_find_user`, `directory_get_user_groups` — directory tools
+OBO requires a **confidential client** with Graph delegated permissions.
+See `docs/azure-setup-step10.md` for the full Portal walkthrough.
+Quick version:
 
-See `docs/azure-setup-step10.md` for the two-app-registration walkthrough.
+1. App registrations → New registration. Web platform, redirect URI
+   `http://localhost:8000/callback`.
+2. Certificates & secrets → New client secret (copy the value).
+3. Expose an API → set `api://<client_id>` and add scope `access_as_user`.
+4. API permissions → Microsoft Graph (Delegated): `User.Read.All`,
+   `Directory.Read.All`. Click **Grant admin consent**.
+5. Copy `.env.example` to `.env` and fill the three Azure values.
+6. `uv sync && python server.py`
