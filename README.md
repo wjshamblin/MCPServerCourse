@@ -231,7 +231,7 @@ The generated `.db` file is gitignored. Generation takes a few minutes and produ
 
 | File | Purpose |
 |------|---------|
-| `financial_server.py` | Main MCP server — tools, resources, and entry point |
+| `server.py` | Main MCP server — tools, resources, and entry point |
 | `database.py` | Async SQLite layer with SQL validation and safety checks |
 | `config.py` | Pydantic settings loaded from environment variables / `.env` file |
 | `.env.example` | Template for environment variable configuration |
@@ -279,7 +279,7 @@ uv run python generate_data.py
 cp .env.example .env
 
 # Start the financial server
-uv run python financial_server.py
+uv run python server.py
 ```
 
 The server starts on `http://0.0.0.0:8000` by default. Connect a client the same way as previous steps, pointing at `http://localhost:8000/mcp`.
@@ -348,7 +348,7 @@ OPENAI_BASE_URL=https://your-proxy.example.com/v1
 | File | Purpose |
 |------|---------|
 | `nl2sql.py` | NL-to-SQL pipeline — schema context, LLM calls, SQL extraction |
-| `financial_server.py` | MCP server — `ask` tool, prompt templates |
+| `server.py` | MCP server — `ask` tool, prompt templates |
 | `config.py` | LLM provider settings (API keys, model names, base URLs) |
 
 ---
@@ -409,7 +409,7 @@ The `export_report` tool executes a query and formats the results as CSV. Becaus
 
 ## Server Composition
 
-FastMCP servers can be composed using `mount()`. The `composed_server.py` file demonstrates mounting the financial server under a namespace:
+FastMCP servers can be composed using `mount()`. The `server.py` file demonstrates mounting the financial server under a namespace:
 
 ```python
 from fastmcp import FastMCP
@@ -425,6 +425,6 @@ When mounted with a namespace, all tools, resources, and prompts from the child 
 
 | File | Purpose |
 |------|---------|
-| `financial_server.py` | Refactored server with lifespan and background task |
-| `composed_server.py` | Composition demo — mounts the financial server under a namespace |
+| `server.py` | Composition entry point — mounts the financial server under a namespace |
+| `financial_server.py` | Child server with lifespan and background task (mounted by `server.py`) |
 | `database.py` | Added `DatabasePool` class for persistent connections |
