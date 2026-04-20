@@ -14,7 +14,7 @@ This guide walks through creating an Azure AD app registration for the financial
 3. Configure:
    - **Name**: `MCP Financial Server` (or any descriptive name)
    - **Supported account types**: "Accounts in this organizational directory only" (Single tenant)
-   - **Redirect URI**: Select **Web**, enter `http://localhost:8000/mcp/oauth/callback`
+   - **Redirect URI**: Select **Web**, enter `http://localhost:8000/auth/callback` (this is `AzureProvider`'s default redirect path)
 4. Click **Register**
 5. Copy the **Application (client) ID** — this is your `AZURE_CLIENT_ID`
 6. Copy the **Directory (tenant) ID** — this is your `AZURE_TENANT_ID`
@@ -57,8 +57,8 @@ The full scope URI will be: `api://<client-id>/access_as_user`
 AZURE_CLIENT_ID=<Application (client) ID from Step 1>
 AZURE_CLIENT_SECRET=<Client secret Value from Step 2>
 AZURE_TENANT_ID=<Directory (tenant) ID from Step 1>
-MCP_API_SCOPE=access_as_user
-OAUTH_BASE_URL=http://localhost:8000
+AZURE_API_SCOPE=access_as_user
+SERVER_BASE_URL=http://localhost:8000
 ```
 
 ## What is a Confidential Client?
@@ -81,5 +81,5 @@ The client secret proves the server's identity to Azure AD. This is more secure 
 ## Redirect URI for Production
 
 When deploying, update:
-- **Redirect URI** in Azure Portal to your production URL: `https://your-domain.com/mcp/oauth/callback`
-- `OAUTH_BASE_URL` in `.env` to match
+- **Redirect URI** in Azure Portal to your production URL: `https://your-domain.com/auth/callback`
+- `SERVER_BASE_URL` in `.env` to match

@@ -20,17 +20,18 @@ Reference:
 Pieces on this branch:
   server.py             this file — AzureProvider + EntraOBOToken wiring
   ms_graph_client.py    thin httpx wrapper around Graph
-  directory_service.py  business logic that calls Graph with the OBO token
+  directory_service.py  thin coordinator that calls Graph with the OBO token
   models.py             pydantic types
 
-What changed vs. the hand-rolled implementation this step shipped with:
-  - `AzureProvider` replaces hand-built `OAuthProxy` + `JWTVerifier`.
-  - Graph scopes move into `additional_authorize_scopes` so they're
-    requested during the initial OAuth consent (required for OBO to work).
-  - `EntraOBOToken([...])` parameter default replaces the hand-rolled
-    `OBOTokenExchange`/cache. Under the hood it uses
-    `azure.identity.aio.OnBehalfOfCredential`, which has its own token
-    cache shared across tool calls.
+Key moving parts:
+  - `AzureProvider`              handles the inbound OAuth + JWT validation.
+                                 Graph scopes go in `additional_authorize_scopes`
+                                 so they're consented at login (required for OBO).
+  - `EntraOBOToken(scopes)`      FastMCP dependency used as a tool parameter
+                                 default; per-request it exchanges the inbound
+                                 user token for a Graph-audience token.
+                                 Backed by `azure.identity.aio.OnBehalfOfCredential`,
+                                 which caches exchanged tokens internally.
 
 Run:  python server.py
 

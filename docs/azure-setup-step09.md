@@ -30,7 +30,7 @@ Public clients + PKCE are considered **more secure** than confidential clients f
 
 1. Still in **Authentication**
 2. Click **Add a platform** > **Mobile and desktop applications**
-3. Add redirect URI: `http://localhost:8000/mcp/oauth/callback`
+3. Add redirect URI: `http://localhost:8000/auth/callback` (`AzureProvider`'s default)
 4. (Optional) Remove the **Web** platform if you only want public client flows
 
 ## Step 3: Remove Client Secret (Optional)
@@ -58,7 +58,7 @@ ALLOWED_USERS=alice@university.edu,bob@university.edu
 
 ## PKCE (Proof Key for Code Exchange)
 
-PKCE is automatically handled by FastMCP's OAuthProxy. Here's how it works:
+PKCE is automatically handled by FastMCP's `AzureProvider` (inherited from its `OAuthProxy` base). Here's how it works:
 
 1. Client generates a random `code_verifier` (43-128 chars)
 2. Client computes `code_challenge = BASE64URL(SHA256(code_verifier))`

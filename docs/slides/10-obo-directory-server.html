@@ -45,9 +45,11 @@
   <ul>
     <li>Steps 07 &ndash; 09 were intentionally tiny (one file, one idea)</li>
     <li>Step 10 keeps the same auth shape but now does something substantive: <strong>call Microsoft Graph on the user's behalf</strong></li>
-    <li>That needs real code, so <code>server.py</code> pulls in four supporting modules</li>
+    <li>That needs real code, so <code>server.py</code> pulls in three supporting modules</li>
     <li>All composition-with-financial-server framing is gone &mdash; <code>server.py</code> <em>is</em> the directory server</li>
+    <li>We build on FastMCP's <code>AzureProvider</code> + <code>EntraOBOToken</code> rather than hand-rolling the exchange</li>
   </ul>
+  <p class="small">Upstream reference: <a href="https://gofastmcp.com/integrations/azure#on-behalf-of-obo">FastMCP &mdash; Azure OBO guide</a></p>
 </section>
 
 <!-- Slide 3: The problem OBO solves -->
@@ -101,30 +103,30 @@ User → MCP client → Our server
 <section>
   <h2>Files on This Branch</h2>
   <pre><code class="language-text" data-trim data-noescape>
-server.py             # auth + OBO wiring + MCP tools
-token_exchange.py     # OBOTokenExchange (POST + TTL cache)
+server.py             # AzureProvider + EntraOBOToken wiring + MCP tools
 ms_graph_client.py    # thin httpx wrapper around Graph
-directory_service.py  # business logic tying OBO + Graph
+directory_service.py  # business logic calling Graph with the OBO token
 models.py             # pydantic UserResult
 .env.example
-pyproject.toml        # + pydantic
+pyproject.toml        # fastmcp[azure] + aiohttp
   </code></pre>
-  <p class="small">First branch in the course where <code>server.py</code> imports its own helpers.</p>
+  <p class="small">No hand-rolled <code>token_exchange.py</code> &mdash; FastMCP's <code>EntraOBOToken</code> handles that for us.</p>
 </section>
 
 <!-- Slide 7: Azure app setup -->
 <section>
   <h2>Azure App Setup</h2>
   <ol>
-    <li>App registration as in step 08 (Web platform, client secret)</li>
+    <li>App registration as in step 08: <em>Web</em> platform, redirect URI <code>http://localhost:8000/auth/callback</code>, client secret</li>
+    <li>Manifest &rarr; <code>"requestedAccessTokenVersion": 2</code> (AzureProvider speaks v2)</li>
+    <li><strong>Expose an API</strong> &rarr; keep <code>access_as_user</code></li>
     <li><strong>API permissions</strong> &rarr; Microsoft Graph &rarr; Delegated:
       <ul>
         <li><code>User.Read.All</code></li>
         <li><code>Directory.Read.All</code></li>
       </ul>
     </li>
-    <li>Tenant admin consent on those scopes</li>
-    <li><strong>Expose an API</strong> &rarr; keep <code>access_as_user</code> from step 08</li>
+    <li><strong>Grant admin consent</strong> on those scopes &mdash; required or OBO fails with <code>AADSTS65001</code></li>
   </ol>
 </section>
 
@@ -135,74 +137,64 @@ pyproject.toml        # + pydantic
 AZURE_TENANT_ID=&lt;tenant&gt;
 AZURE_CLIENT_ID=&lt;client id&gt;
 AZURE_CLIENT_SECRET=&lt;secret value&gt;        # confidential again
-AZURE_API_SCOPE=access_as_user
+AZURE_API_SCOPE=access_as_user             # unprefixed
 SERVER_BASE_URL=http://localhost:8000
 
-GRAPH_SCOPES="https://graph.microsoft.com/User.Read.All \
-              https://graph.microsoft.com/Directory.Read.All"
+AZURE_GRAPH_SCOPES="https://graph.microsoft.com/User.Read.All \
+                    https://graph.microsoft.com/Directory.Read.All"
 GRAPH_BASE_URL=https://graph.microsoft.com/beta
-
-OBO_TOKEN_CACHE_TTL=3000
   </code></pre>
+  <p class="small">No cache-TTL knob &mdash; <code>EntraOBOToken</code> caches internally
+    (via <code>OnBehalfOfCredential</code>).</p>
 </section>
 
 <!-- Slide 9: Auth + OBO wiring -->
 <section>
   <h2>Auth + OBO Wiring</h2>
   <pre><code class="python" data-trim data-noescape>
-token_verifier = JWTVerifier(
-    jwks_uri=f".../{TENANT}/discovery/v2.0/keys",
-    issuer  =f".../{TENANT}/v2.0",
-    audience=CLIENT_ID,
+from fastmcp.server.auth.providers.azure import (
+    AzureProvider, EntraOBOToken,
 )
 
-auth = OAuthProxy(
-    upstream_authorization_endpoint=f".../authorize",
-    upstream_token_endpoint         =f".../token",
-    upstream_client_id              =CLIENT_ID,
-    upstream_client_secret          =CLIENT_SECRET,
-    valid_scopes                    =_all_scopes,
-    extra_authorize_params          ={"scope": " ".join(_all_scopes)},
-    token_verifier                  =token_verifier,
-    base_url                        =SERVER_BASE_URL,
+auth = AzureProvider(
+    client_id=AZURE_CLIENT_ID,
+    client_secret=AZURE_CLIENT_SECRET,       # OBO needs the secret
+    tenant_id=AZURE_TENANT_ID,
+    required_scopes=["access_as_user"],      # our API scope
+    additional_authorize_scopes=[            # pre-consented, enables OBO
+        "openid", "profile", "email",
+        "https://graph.microsoft.com/User.Read.All",
+        "https://graph.microsoft.com/Directory.Read.All",
+    ],
+    base_url=SERVER_BASE_URL,
 )
 
-obo       = OBOTokenExchange(TENANT, CLIENT_ID, CLIENT_SECRET,
-                             GRAPH_SCOPES, OBO_TOKEN_CACHE_TTL)
 graph     = GraphClient(GRAPH_BASE_URL)
-directory = DirectoryService(obo, graph)
+directory = DirectoryService(graph=graph)    # no OBO in constructor
   </code></pre>
+  <p class="small">Graph scopes ride along in <code>additional_authorize_scopes</code> so
+    Azure consents them up-front. OBO can only exchange for scopes the
+    user has already consented to.</p>
 </section>
 
-<!-- Slide 10: OBOTokenExchange -->
+<!-- Slide 10: EntraOBOToken -->
 <section>
-  <h2>OBOTokenExchange</h2>
+  <h2>EntraOBOToken as a Parameter Default</h2>
   <pre><code class="python" data-trim data-noescape>
-class OBOTokenExchange:
-    async def exchange(self, user_token: str) -> str:
-        # Return cached exchange if still fresh
-        cached = self._cache.get(user_token)
-        if cached and cached.expires_at &gt; time.time():
-            return cached.access_token
-
-        data = {
-          "client_id":            self.client_id,
-          "client_secret":        self.client_secret,
-          "assertion":            user_token,
-          "scope":                self.scopes,
-          "requested_token_use":  "on_behalf_of",
-          "grant_type":           "urn:ietf:params:oauth:grant-type:jwt-bearer",
-        }
-        r = await self._http.post(self.token_endpoint, data=data)
-        if r.status_code != 200:
-            raise OBOExchangeError(r.text)
-        body = r.json()
-        self._cache[user_token] = _CacheEntry(
-            access_token=body["access_token"],
-            expires_at=time.time() + min(body["expires_in"], self.ttl))
-        return body["access_token"]
+@mcp.tool
+async def find_user(
+    query: str,
+    graph_token: str = EntraOBOToken(GRAPH_SCOPES),
+) -> str:
+    results = await directory.find_user(graph_token, query)
+    ...
   </code></pre>
-  <p class="small">TTL cache avoids hammering Azure on every tool call.</p>
+  <ul>
+    <li><code>EntraOBOToken(scopes)</code> is a FastMCP dependency, not a real default</li>
+    <li>Per request it grabs the inbound user token and exchanges it for a Graph token scoped to <code>scopes</code></li>
+    <li>Backed by <code>azure.identity.aio.OnBehalfOfCredential</code> &mdash; built-in caching keyed on (assertion, scopes)</li>
+    <li>Tool receives a ready-to-use token; OBO mechanics never leak into the MCP schema</li>
+  </ul>
 </section>
 
 <!-- Slide 11: DirectoryService -->
@@ -210,15 +202,20 @@ class OBOTokenExchange:
   <h2>DirectoryService</h2>
   <pre><code class="python" data-trim data-noescape>
 class DirectoryService:
-    async def find_user(self, user_token: str, query: str):
-        graph_token = await self.obo.exchange(user_token)
-        return await self.graph.search_users(graph_token, query)
+    """Thin coordinator for Microsoft Graph directory calls."""
 
-    async def get_user_groups(self, user_token: str, user_id: str):
-        graph_token = await self.obo.exchange(user_token)
-        return await self.graph.list_member_of(graph_token, user_id)
+    def __init__(self, graph: GraphClient):
+        self.graph = graph
+
+    async def find_user(self, graph_token: str, query: str):
+        logger.info(f"Finding user: {sanitize_for_log(query)}")
+        return await self.graph.find_user(graph_token, query)
+
+    async def get_user_groups(self, graph_token: str, user_id: str):
+        logger.info(f"Getting groups for: {sanitize_for_log(user_id)}")
+        return await self.graph.get_user_groups(graph_token, user_id)
   </code></pre>
-  <p class="small">Tools stay thin; OBO + Graph never leak into the MCP surface.</p>
+  <p class="small">OBO is gone from this layer entirely; it just takes an already-exchanged Graph token.</p>
 </section>
 
 <!-- Slide 12: MCP tools -->
@@ -226,22 +223,27 @@ class DirectoryService:
   <h2>MCP Tools &amp; Resource</h2>
   <pre><code class="python" data-trim data-noescape>
 @mcp.tool
-async def find_user(query: str) -> str:
-    tok = get_access_token()
-    if not tok: return json.dumps({"error": "Not authenticated"})
-    try:
-        results = await directory.find_user(tok.token, query)
-    except OBOExchangeError as e:
-        return json.dumps({"error": f"OBO exchange failed: {e}"})
+async def find_user(
+    query: str,
+    graph_token: str = EntraOBOToken(GRAPH_SCOPES),
+) -> str:
+    results = await directory.find_user(graph_token, query)
     users = [UserResult.from_graph(r).model_dump() for r in results]
     return json.dumps({"query": query, "count": len(users),
                        "results": users}, indent=2)
 
 @mcp.tool
-async def get_user_groups(user_id: str) -> str: ...
+async def get_user_groups(user_id: str,
+        graph_token: str = EntraOBOToken(GRAPH_SCOPES)) -> str: ...
 
 @mcp.tool
-async def whoami() -> dict: ...
+async def whoami() -> dict: ...              # inbound claims only
+
+@mcp.tool
+async def whoami_obo(
+        graph_token: str = EntraOBOToken(GRAPH_SCOPES)) -> dict:
+    """Side-by-side inbound vs. OBO-exchanged token claims."""
+    ...
 
 @mcp.resource("directory://auth/user",
               mime_type="application/json")
@@ -249,26 +251,41 @@ async def auth_user_resource() -> str: ...
   </code></pre>
 </section>
 
-<!-- Slide 13: Failure modes -->
+<!-- Slide 13: whoami_obo — see OBO happen -->
+<section>
+  <h2><code>whoami_obo</code> &mdash; See OBO Happen</h2>
+  <p class="small">Decodes both tokens (no verification) and compares claims:</p>
+  <table class="small">
+    <tr><th>Claim</th><th>Inbound MCP token</th><th>OBO Graph token</th></tr>
+    <tr><td><code>oid</code>, <code>tid</code>, <code>upn</code></td><td colspan="2" style="text-align:center"><em>identical</em> &mdash; same human</td></tr>
+    <tr><td><code>aud</code></td><td><code>api://&lt;client_id&gt;</code></td><td><code>https://graph.microsoft.com</code></td></tr>
+    <tr><td><code>scp</code></td><td><code>access_as_user</code></td><td>Graph scopes requested</td></tr>
+    <tr><td><code>appid</code></td><td>MCP client's id</td><td>our server's <code>client_id</code></td></tr>
+  </table>
+  <p class="small">Pedagogical payoff: identity is preserved, audience &amp; scopes flip.</p>
+</section>
+
+<!-- Slide 14: Failure modes -->
 <section>
   <h2>Failure Modes Worth Knowing</h2>
   <table class="small">
     <tr><th>Symptom</th><th>Likely cause</th></tr>
-    <tr><td><code>AADSTS65001</code> on exchange</td><td>Delegated Graph scopes not consented for this tenant</td></tr>
-    <tr><td><code>AADSTS50013</code></td><td>User token <code>aud</code> isn't <code>api://CLIENT_ID</code></td></tr>
+    <tr><td><code>AADSTS65001</code> on exchange</td><td>Delegated Graph scopes not admin-consented for this tenant</td></tr>
+    <tr><td><code>AADSTS50013</code></td><td>User token <code>aud</code> isn't <code>api://CLIENT_ID</code> &mdash; check <code>requestedAccessTokenVersion: 2</code></td></tr>
+    <tr><td><code>ImportError: aiohttp...</code></td><td><code>azure-identity</code>'s async transport needs <code>aiohttp</code> &mdash; pinned in <code>pyproject.toml</code></td></tr>
     <tr><td>OBO exchange works, Graph 403</td><td>Missing Graph permission (e.g. <code>Directory.Read.All</code>)</td></tr>
-    <tr><td>OBO slow on every call</td><td>Cache TTL too low, or <code>offline_access</code> missing</td></tr>
+    <tr><td>Scope not in <code>additional_authorize_scopes</code></td><td>OBO can only exchange for scopes the user already consented to</td></tr>
   </table>
 </section>
 
-<!-- Slide 14: Key takeaways -->
+<!-- Slide 15: Key takeaways -->
 <section>
   <h2>Key Takeaways</h2>
   <ul>
     <li>OBO lets a server call downstream APIs <em>as the user</em>, not as the app</li>
     <li>Requires a confidential client &mdash; the secret is part of the exchange</li>
-    <li>The tool surface stays tiny; the work lives in <code>OBOTokenExchange</code> + <code>GraphClient</code> + <code>DirectoryService</code></li>
-    <li>Cache exchanged tokens &mdash; don't re-exchange on every call</li>
+    <li><code>AzureProvider</code> + <code>EntraOBOToken</code> collapse ~100 lines of hand-rolled plumbing to a single parameter default</li>
+    <li>Downstream scopes must be in <code>additional_authorize_scopes</code> so they're consented at login</li>
     <li>Preserves audit, least-privilege, and user identity across the network hop</li>
   </ul>
   <p class="small" style="margin-top: 0.5em;">Next: step 11 leaves auth behind and introduces interactive UIs via MCP Apps.</p>

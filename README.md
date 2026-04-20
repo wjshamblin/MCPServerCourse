@@ -435,11 +435,13 @@ When mounted with a namespace, all tools, resources, and prompts from the child 
 
 Adds Azure AD authentication to the financial server.
 
+Reference: [FastMCP — Azure (Microsoft Entra ID) OAuth guide](https://gofastmcp.com/integrations/azure#azure-microsoft-entra-id-oauth--fastmcp).
+
 ### What changes
 
 - Server now requires Azure AD authentication (when configured)
 - New `get_authenticated_user` tool returns user claims from the token
-- `OAuthProxy` bridges Azure AD's OAuth flow with MCP's client protocol
+- `AzureProvider` handles the Azure-specific OAuth flow (upstream endpoints, JWKS validation, v2 token quirks) in one object
 
 ### Setup
 
@@ -448,10 +450,10 @@ See `docs/azure-setup-step08.md` for the full Azure Portal walkthrough.
 ### Key concepts
 
 - **Confidential client** — server has a client secret, proving its identity
-- **OAuthProxy** — bridges traditional OAuth providers (Azure, Google) with MCP's Dynamic Client Registration
-- **Custom scope** — `api://<client-id>/access_as_user` scopes the token to your API
-- **JWTVerifier** — validates tokens using Azure AD's published signing keys (JWKS)
-- **get_access_token()** — access the authenticated user's token in any tool
+- **AzureProvider** — FastMCP's purpose-built Azure OAuth provider; wraps the generic `OAuthProxy` with Azure-correct defaults (v2 issuer, JWKS, audience, `offline_access`)
+- **Custom scope** — `access_as_user` (unprefixed — `AzureProvider` prepends `api://<client_id>/`) scopes the token to your API
+- **`additional_authorize_scopes`** — OIDC / Graph scopes requested during login but not validated on incoming tokens
+- **`get_access_token()`** — access the authenticated user's token in any tool
 
 ---
 
@@ -461,6 +463,12 @@ See `docs/azure-setup-step08.md` for the full Azure Portal walkthrough.
 
 - **Confidential** (step-08): Server has a client secret. More traditional.
 - **Public** (step-09): No client secret. Uses PKCE instead. Simpler, and more secure for many scenarios.
+
+### What changes vs step 08
+
+- `AzureProvider` initialized without `client_secret` — public-client mode
+- `JWT_SIGNING_KEY` is now required: FastMCP uses it to sign the JWTs it issues to MCP clients (in confidential mode this key is derived from the client secret automatically)
+- PKCE is automatic via `AzureProvider`
 
 ### Security additions
 
@@ -478,6 +486,8 @@ This branch promotes a real, substantive demo: a directory-lookup server
 that calls Microsoft Graph **on behalf of** the signed-in user. OBO is
 the production-grade pattern that lets a multi-tier app preserve user
 identity (and permissions) across an upstream API call.
+
+Reference: [FastMCP — Azure On-Behalf-Of guide](https://gofastmcp.com/integrations/azure#on-behalf-of-obo).
 
 ### Why OBO matters
 
@@ -503,17 +513,24 @@ MCP client → Server (api://<app>/access_as_user token)
 
 | File | Purpose |
 |---|---|
-| `server.py` | Auth wiring, OBO setup, MCP tools |
-| `token_exchange.py` | `OBOTokenExchange` — cached upstream POST against Azure's `/token` |
+| `server.py` | `AzureProvider` + `EntraOBOToken` wiring and MCP tools |
 | `ms_graph_client.py` | Thin `httpx.AsyncClient` wrapper for Graph |
-| `directory_service.py` | Business logic that ties OBO + Graph together |
+| `directory_service.py` | Thin coordinator that calls Graph with a pre-exchanged token |
 | `models.py` | Pydantic types for Graph results |
+
+The OBO token exchange itself isn't hand-rolled — FastMCP's
+`EntraOBOToken` dependency (backed by
+`azure.identity.aio.OnBehalfOfCredential`) performs the exchange per
+request, and caches the result keyed on `(user_token, scopes)`.
 
 ### Tools / resources
 
 - `find_user(query)` — search Graph by name, email, or NetID (up to 10 results)
 - `get_user_groups(user_id)` — list group memberships for a user
-- `whoami()` — identity claims for the current caller
+- `whoami()` — identity claims for the current caller (inbound MCP token)
+- `whoami_obo()` — side-by-side inbound vs. OBO-exchanged Graph token
+  claims, useful for *seeing* the exchange happen (`aud` and `scp` flip,
+  `oid`/`tid`/`upn` stay pinned to the same user)
 - `directory://auth/user` resource — same identity, exposed as a resource
 
 ### Setup
@@ -523,10 +540,11 @@ See `docs/azure-setup-step10.md` for the full Portal walkthrough.
 Quick version:
 
 1. App registrations → New registration. Web platform, redirect URI
-   `http://localhost:8000/callback`.
+   `http://localhost:8000/auth/callback` (`AzureProvider`'s default).
 2. Certificates & secrets → New client secret (copy the value).
 3. Expose an API → set `api://<client_id>` and add scope `access_as_user`.
-4. API permissions → Microsoft Graph (Delegated): `User.Read.All`,
+4. Manifest → set `"requestedAccessTokenVersion": 2`.
+5. API permissions → Microsoft Graph (Delegated): `User.Read.All`,
    `Directory.Read.All`. Click **Grant admin consent**.
-5. Copy `.env.example` to `.env` and fill the three Azure values.
-6. `uv sync && python server.py`
+6. Copy `.env.example` to `.env` and fill the three Azure values.
+7. `uv sync && python server.py`
