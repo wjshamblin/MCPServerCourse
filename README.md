@@ -513,29 +513,54 @@ See `docs/azure-setup-step10.md` for the two-app-registration walkthrough.
 
 # Step 11: MCP Apps
 
-An MCP server that demonstrates **MCP Apps**: interactive UIs rendered
-inside the AI client (Claude Desktop, Cursor, VS Code Copilot) via Prefab
-UI components, backed by tools that the LLM can also call directly.
+An MCP server that demonstrates **[MCP Apps](https://gofastmcp.com/apps/overview)**:
+interactive UIs rendered inside the AI client (Claude Desktop, Cursor,
+VS Code Copilot) via [Prefab UI](https://gofastmcp.com/apps/prefab)
+components, backed by tools that the LLM can also call directly.
 
 Like steps 07–09, this branch deliberately strips earlier-step machinery
 (database, auth, OBO) so the App mechanic is the only new concept.
 
+## Quick reference: FastMCP docs
+
+| Topic | Link |
+|---|---|
+| MCP Apps overview | [gofastmcp.com/apps/overview](https://gofastmcp.com/apps/overview) |
+| `FastMCPApp` (interactive apps) | [gofastmcp.com/apps/interactive-apps](https://gofastmcp.com/apps/interactive-apps) |
+| Prefab UI (components + actions) | [gofastmcp.com/apps/prefab](https://gofastmcp.com/apps/prefab) |
+| Generative UI (LLM writes the UI) | [gofastmcp.com/apps/generative](https://gofastmcp.com/apps/generative) |
+| Local app preview (`fastmcp dev apps`) | [gofastmcp.com/apps/development](https://gofastmcp.com/apps/development) |
+| `ctx.report_progress()` | [gofastmcp.com/servers/progress](https://gofastmcp.com/servers/progress) |
+| `ctx.elicit()` | [gofastmcp.com/servers/elicitation](https://gofastmcp.com/servers/elicitation) |
+| `Context` (logging, progress, elicit) | [gofastmcp.com/servers/context](https://gofastmcp.com/servers/context) |
+
 ## What you get
 
-`server.py` is the only Python file. It exposes four surfaces:
+`server.py` is the only Python file. It exposes **four UI surfaces**
+plus a few plain tools:
 
 | Surface | Purpose |
 |---|---|
 | **Counter** app | One-screen interactive UI: live counter with +1 / +10 / Reset / Refresh buttons. The smallest end-to-end example. |
 | **Progress** app | `Loader` / `Ring` / `Progress` components driven by a 4-stage server-side tool chain, so progress is *real* (not faked client-side). |
-| **Deploy Console** app | Kitchen-sink dashboard: stat cards, environment-status pills, a Dialog-gated deploy action, and server-side `ctx.elicit()` for rollback confirmation. |
+| **Deploy Console** app | Kitchen-sink dashboard: stat cards, environment-status pills, a Dialog-gated deploy action, and server-side [`ctx.elicit()`](https://gofastmcp.com/servers/elicitation) for rollback confirmation. |
 | **Generative UI** provider | Lets the LLM write Prefab UI code at runtime in a Pyodide sandbox. Paired with a seed-data tool (`get_lab_spending`) for a reproducible "visualize this data" demo. |
 
-Plus a handful of plain tools (`hello`, `add`, `render_report`) — including
-one that demonstrates `ctx.report_progress()` for clients with native
-progress UI.
+### Plain tools (no UI)
+
+These are regular LLM-callable tools included alongside the apps so
+students can contrast the two surfaces:
+
+| Tool | Purpose |
+|---|---|
+| `hello(name)` | Smallest possible `@mcp.tool` — a baseline for "this is an MCP tool." |
+| `add(a, b)` | Type-annotated numeric tool — shows the auto-generated schema. |
+| `render_report(pages)` | Simulates a long-running render and streams progress via [`ctx.report_progress()`](https://gofastmcp.com/servers/progress). Clients with native progress UI (Claude Desktop, Cursor) show a real spinner/bar while it runs. Pairs conceptually with the Progress app. |
 
 ## The MCP Apps pattern
+
+See [**Interactive Apps**](https://gofastmcp.com/apps/interactive-apps)
+for the full treatment. In ~10 lines:
 
 ```python
 from fastmcp.apps import FastMCPApp
@@ -561,12 +586,12 @@ mcp.add_provider(counter_app)        # register the app on the main server
 
 Three pieces to internalise:
 
-1. **`FastMCPApp`** bundles a UI + the tools that back it.
+1. **[`FastMCPApp`](https://gofastmcp.com/apps/interactive-apps)** bundles a UI + the tools that back it.
 2. **`@app.tool(model=True)`** marks a function as callable by both the UI
-   (via `CallTool` actions) and the LLM directly. (`model=False` would
-   hide it from the LLM — useful for purely UI-internal helpers.)
-3. **`@app.ui()`** returns a Prefab UI component tree. Buttons fire
-   `CallTool(...)` actions, which round-trip back through MCP to invoke
+   (via [`CallTool`](https://gofastmcp.com/apps/prefab) actions) and the LLM directly.
+   (`model=False` would hide it from the LLM — useful for purely UI-internal helpers.)
+3. **`@app.ui()`** returns a [Prefab UI](https://gofastmcp.com/apps/prefab) component tree.
+   Buttons fire `CallTool(...)` actions, which round-trip back through MCP to invoke
    the matching tool, then update UI state with `SetState(...)`.
 
 ## App: Counter
@@ -579,6 +604,9 @@ to update the UI.
 The state lives *client-side* (under the key `"count"`). The Refresh
 button seeds it on first render by calling `get_counter()` and copying
 the result back into state.
+
+**See also:** [FastMCPApp](https://gofastmcp.com/apps/interactive-apps)
+· [Prefab actions (`CallTool`, `SetState`, `ShowToast`)](https://gofastmcp.com/apps/prefab)
 
 ## App: Progress
 
@@ -601,8 +629,11 @@ pyramid of callbacks.
 
 Companion plain tool: **`render_report(pages)`** — uses
 `ctx.report_progress(done, total)` so clients with native progress UI
-(Claude Desktop, Cursor) show a real spinner/bar. See
-[FastMCP progress docs](https://gofastmcp.com/servers/progress).
+(Claude Desktop, Cursor) show a real spinner/bar.
+
+**See also:** [Progress reporting](https://gofastmcp.com/servers/progress)
+· [`Context` API](https://gofastmcp.com/servers/context)
+· [Prefab UI components](https://gofastmcp.com/apps/prefab)
 
 ## App: Deploy Console
 
@@ -625,6 +656,10 @@ The kitchen-sink showcase. One screen, six patterns:
 
 All three backing tools are `model=True`, so the LLM can drive the
 console conversationally: *"deploy orders-api"* / *"roll back billing"*.
+
+**See also:** [Elicitation](https://gofastmcp.com/servers/elicitation)
+· [Prefab Dialog / Alert / Badge](https://gofastmcp.com/apps/prefab)
+· [`Context` API](https://gofastmcp.com/servers/context)
 
 ## Generative UI
 
@@ -673,6 +708,10 @@ No `numpy` / `pandas` / `requests`. If the LLM tries to import one,
 the sandbox raises `ImportError` and the LLM typically retries with a
 different approach.
 
+**See also:** [Generative UI](https://gofastmcp.com/apps/generative)
+· [Prefab component reference](https://gofastmcp.com/apps/prefab)
+· [Local preview with `fastmcp dev apps`](https://gofastmcp.com/apps/development)
+
 ## Running
 
 ```bash
@@ -684,6 +723,10 @@ Connect from Claude Desktop, Cursor, or VS Code Copilot. Clients that
 support MCP Apps will offer to open the **Counter**, **Progress**, and
 **Deploy** apps. Clients that don't still see the underlying tools and
 can call them directly.
+
+For local iteration without a full MCP client, use
+[`fastmcp dev apps`](https://gofastmcp.com/apps/development) to preview
+Apps in a browser.
 
 ## Adding auth
 
