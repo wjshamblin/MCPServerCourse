@@ -1,16 +1,69 @@
+# --- Python ---
 __pycache__/
 *.pyc
 *.pyo
-.env*
-!.env.example
-*.db
-data/
-.venv/
-venv/
-.idea/
-.vscode/
 *.egg-info/
 dist/
 build/
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# --- Virtual envs ---
+.venv/
+venv/
+
+# --- Env / secrets ---
+.env*
+!.env.example
+
+# --- Data / runtime ---
+*.db
+data/
 logs/
+*.log
 uv.lock
+
+# --- Node ---
+node_modules/
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+
+# --- Editors & IDEs ---
+.vscode/
+# IntelliJ / PyCharm / WebStorm
+.idea/
+# JetBrains Fleet
+.fleet/
+.zed/
+# VSCode Local History
+.history/
+*.sublime-project
+*.sublime-workspace
+*.swp
+*.swo
+
+# --- AI coding agents ---
+# Cursor IDE
+.cursor/
+# Claude Code
+.claude/
+# Aider
+.aider*
+# Superpowers skill framework
+.superpowers/
+# Windsurf
+.windsurf/
+# Continue.dev
+.continue/
+# Generic agent scratch dir
+.agents/
+# Codeium
+.codeium/
+
+# --- MCP scratch / caches ---
+.playwright-mcp/
