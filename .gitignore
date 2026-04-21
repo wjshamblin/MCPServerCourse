@@ -14,3 +14,5 @@ dist/
 build/
 logs/
 uv.lock
+node_modules/
+.DS_Store

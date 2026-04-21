@@ -216,7 +216,149 @@ UI re-renders: Metric shows 42
   </ul>
 </section>
 
-<!-- Slide 12: Run it -->
+<!-- Slide 12: Progress — three new components -->
+<section>
+  <h2>App #2: Progress &mdash; Loader / Ring / Progress</h2>
+  <ul>
+    <li>Three primitives for long-running work</li>
+    <li><code>Loader(variant="spin|dots|pulse|bars|ios")</code> &mdash; spinners</li>
+    <li><code>Ring(value=STATE.percent, thickness=10)</code> &mdash; circular progress</li>
+    <li><code>Progress(value=STATE.percent, variant="info")</code> &mdash; horizontal bar</li>
+  </ul>
+  <pre><code class="language-python" data-trim data-noescape>
+Ring(value=STATE.percent, label=f"{STATE.percent}%",
+     variant="info", size="lg", thickness=10)
+  </code></pre>
+  <p class="small">Each accepts reactive <code>Rx</code> values, so they animate without custom JS.</p>
+</section>
+
+<!-- Slide 13: Progress — the 4-stage chain -->
+<section>
+  <h2>Progress &mdash; Real Server-Driven Stages</h2>
+  <ul>
+    <li>Clicking <strong>Render Report</strong> fires four <code>CallTool</code>s in sequence</li>
+    <li>Built programmatically so nesting reads left-to-right &mdash; no pyramid-of-doom</li>
+    <li>Each stage is a real server round-trip; the percent you see is the server's answer</li>
+  </ul>
+  <pre><code class="language-python" data-trim data-noescape>
+def _build_stage_chain(stages):
+    if not stages:
+        return [SetState("running", False), ShowToast("Done")]
+    head, *tail = stages
+    return [CallTool(render_stage, arguments={"stage": head},
+                     on_success=[SetState("percent", RESULT["percent"]),
+                                 *_build_stage_chain(tail)])]
+  </code></pre>
+  <p class="small">Companion plain tool: <code>render_report</code> uses <code>ctx.report_progress()</code> for clients with native progress UI.</p>
+</section>
+
+<!-- Slide 14: Deploy — stat cards -->
+<section>
+  <h2>App #3: Deploy Console &mdash; Stat Cards</h2>
+  <ul>
+    <li><code>Grid</code> + <code>Card</code> + <code>Dot</code> + <code>Metric</code> = flashy dashboard row</li>
+    <li>Environment pills (<code>Badge</code> + <code>Dot</code>) flip color <em>reactively</em> via nested ternaries &mdash; no server round-trip</li>
+  </ul>
+  <pre><code class="language-python" data-trim data-noescape>
+# healthy → success, degraded → warning, else → destructive
+tone = (env_status == "healthy").then(
+    "success",
+    (env_status == "degraded").then("warning", "destructive"),
+)
+Dot(variant=tone)
+Badge(env_status, variant=tone)
+  </code></pre>
+</section>
+
+<!-- Slide 15: Deploy — Dialog-gated action -->
+<section>
+  <h2>Deploy &mdash; Dialog-Gated Destructive Action</h2>
+  <ul>
+    <li>Prefab <code>Dialog</code> wraps a trigger + body</li>
+    <li><em>First</em> child = trigger button; remaining children = body content</li>
+    <li>The Confirm button fires the real <code>CallTool(deploy_service, …)</code></li>
+  </ul>
+  <pre><code class="language-python" data-trim data-noescape>
+with Dialog(name="deploy_dialog", title="Confirm deploy"):
+    Button("Deploy to prod", variant="default")   # trigger
+    with Column():                                  # body
+        Alert(...)
+        Button("Confirm", on_click=[
+            SetState("deploy_dialog", False),
+            CallTool(deploy_service, arguments={"service": ...}),
+        ])
+  </code></pre>
+</section>
+
+<!-- Slide 16: Deploy — ctx.elicit() -->
+<section>
+  <h2>Deploy &mdash; Server-Side <code>ctx.elicit()</code></h2>
+  <ul>
+    <li>The Rollback button fires a tool that <em>pauses</em> and asks the client for typed input</li>
+    <li>The confirmation UI is rendered by the <strong>MCP client</strong>, not by Prefab</li>
+    <li>Elicitation is a protocol feature, not a UI gadget &mdash; works across all MCP clients</li>
+  </ul>
+  <pre><code class="language-python" data-trim data-noescape>
+class RollbackConfirmation(BaseModel):
+    confirm: bool = Field(default=False, description="Confirm rollback")
+    reason: str   = Field(default="", max_length=200)
+
+async def rollback_service(service: str, ctx: Context) -> dict:
+    result = await ctx.elicit(
+        message=f"Roll {service} back?",
+        response_type=RollbackConfirmation,
+    )
+    if not isinstance(result, AcceptedElicitation) or not result.data.confirm:
+        return {"ok": False, "reason": "not confirmed"}
+    ...
+  </code></pre>
+</section>
+
+<!-- Slide 17: Generative UI concept -->
+<section>
+  <h2>Generative UI &mdash; The LLM Writes the UI</h2>
+  <ul>
+    <li>The three apps above are <em>hand-built</em>: you write the Prefab code server-side</li>
+    <li>Generative UI flips that: the <strong>LLM writes Prefab Python at runtime</strong>, in a Pyodide sandbox</li>
+    <li>Code streams into the client token by token &mdash; the user watches the UI build up</li>
+  </ul>
+  <p class="small">Docs: <a href="https://gofastmcp.com/apps/generative">gofastmcp.com/apps/generative</a></p>
+</section>
+
+<!-- Slide 18: Generative UI — one line to register -->
+<section>
+  <h2>One Line to Register</h2>
+  <pre><code class="language-python" data-trim data-noescape>
+from fastmcp.apps.generative import GenerativeUI
+
+mcp.add_provider(GenerativeUI())
+  </code></pre>
+  <p>That one line exposes <strong>two tools</strong>:</p>
+  <ul>
+    <li><code>generate_prefab_ui(code, data=?)</code> &mdash; executes Prefab code in Pyodide and renders the result. Streams partial code browser-side as the LLM types.</li>
+    <li><code>search_prefab_components(query)</code> &mdash; lets the LLM discover components before writing code</li>
+  </ul>
+</section>
+
+<!-- Slide 19: Generative UI demo -->
+<section>
+  <h2>Demo: Visualize Lab Spending</h2>
+  <p>Paired seed tool gives the demo reproducible data:</p>
+  <pre><code class="language-python" data-trim data-noescape>
+@mcp.tool
+def get_lab_spending() -> dict:
+    """Q1 2026 lab spending — 15 rows × 5 categories + summary."""
+    return {"quarter": "Q1 2026", "rows": [...], "summary": {...}}
+  </code></pre>
+  <p>Then prompt your client:</p>
+  <blockquote class="small">
+    "Call <code>get_lab_spending</code>, then visualize it as a bar chart
+    grouped by category, with stat cards for total spend and top category."
+  </blockquote>
+  <p class="small"><strong>Sandbox note:</strong> Pyodide ships stdlib + Prefab only &mdash; no NumPy, pandas, or requests. If the LLM imports one, it gets <code>ImportError</code>.</p>
+</section>
+
+<!-- Slide 20: Run it -->
 <section>
   <h2>Run It</h2>
   <pre><code class="language-bash" data-trim data-noescape>
@@ -226,23 +368,23 @@ python server.py
   <ul>
     <li>No env vars required &mdash; <code>auth=None</code></li>
     <li>Connect from Claude Desktop / Cursor / VS Code Copilot</li>
-    <li>Open the <strong>Counter</strong> App from the client's App picker</li>
-    <li>Or just prompt: "bump the counter by 3 and tell me the new value"</li>
+    <li>Open <strong>Counter</strong>, <strong>Progress</strong>, or <strong>Deploy</strong> from the client's App picker</li>
+    <li>For Generative UI, just prompt: <em>"visualize the lab spending as a bar chart"</em></li>
   </ul>
 </section>
 
-<!-- Slide 13: Where to go next -->
+<!-- Slide 21: Where to go next -->
 <section>
   <h2>Where to Go Next</h2>
   <ul>
-    <li>Gate the App by replacing <code>auth = None</code> with any auth block from steps 07 &ndash; 10</li>
-    <li>Persist <code>_state</code> somewhere real (sqlite, redis) once you stop throwing the server away between restarts</li>
-    <li>Add a second <code>FastMCPApp</code> to see that the plumbing scales &mdash; each app is independent</li>
-    <li>Browse <code>prefab_ui.components</code> for tables, charts, forms, inputs</li>
+    <li>Gate the Apps by replacing <code>auth = None</code> with any auth block from steps 07 &ndash; 10</li>
+    <li>Persist shared state somewhere real (sqlite, redis) once you stop throwing the server away between restarts</li>
+    <li>Swap <code>get_lab_spending</code> for a real data source and let the LLM visualize live numbers</li>
+    <li>Browse <code>prefab_ui.components</code> and <code>prefab_ui.components.charts</code> &mdash; tables, forms, inputs, every chart type</li>
   </ul>
 </section>
 
-<!-- Slide 14: Key takeaways -->
+<!-- Slide 22: Key takeaways -->
 <section>
   <h2>Key Takeaways</h2>
   <ul>
@@ -250,7 +392,8 @@ python server.py
     <li>One file can ship many Apps via <code>mcp.add_provider(app)</code></li>
     <li><code>model=True</code> tools are reachable from both the UI and the LLM &mdash; use that</li>
     <li>Prefab UI state is reactive: <code>Rx</code> reads, <code>SetState</code> writes, <code>RESULT</code> is what the tool returned</li>
-    <li>This branch closes the course &mdash; auth + real work + interactive UI are all on the table</li>
+    <li>Elicitation (<code>ctx.elicit</code>) is a protocol feature &mdash; confirmation UI comes from the client, not Prefab</li>
+    <li>Generative UI lets the LLM build dashboards on the fly &mdash; hand-built and generated apps coexist in one server</li>
   </ul>
 </section>
 
