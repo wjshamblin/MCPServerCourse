@@ -1,79 +1,85 @@
-# Azure App Registration: Public Client (Step 09)
+# Azure App Registration: Confidential Client (Step 09)
 
-This guide covers converting from a confidential client to a public client configuration.
+This guide walks through creating an Azure AD app registration for the financial MCP server.
 
-## What Changes from Step 08
+## Prerequisites
 
-| Setting | Confidential (Step 08) | Public (Step 09) |
-|---------|------------------------|-------------------|
-| Client Secret | Required | Not used |
-| PKCE | Optional | Required (automatic) |
-| Platform | Web | Mobile/Desktop |
-| Security Model | Secret proves server identity | PKCE proves request origin |
+- An Azure AD tenant (organization account)
+- Permission to register applications (or an admin who can do it)
 
-## Why Public Clients?
+## Step 1: Register the Application
 
-Public clients are appropriate when:
-- You cannot securely store a client secret (desktop apps, CLI tools, SPAs)
-- You want to eliminate secret rotation overhead
-- PKCE provides sufficient security for your use case
+1. Go to [Azure Portal](https://portal.azure.com) > **Azure Active Directory** > **App registrations**
+2. Click **New registration**
+3. Configure:
+   - **Name**: `MCP Financial Server` (or any descriptive name)
+   - **Supported account types**: "Accounts in this organizational directory only" (Single tenant)
+   - **Redirect URI**: Select **Web**, enter `http://localhost:8000/auth/callback` (this is `AzureProvider`'s default redirect path)
+4. Click **Register**
+5. Copy the **Application (client) ID** — this is your `AZURE_CLIENT_ID`
+6. Copy the **Directory (tenant) ID** — this is your `AZURE_TENANT_ID`
 
-Public clients + PKCE are considered **more secure** than confidential clients for many deployment scenarios because there is no secret that can be leaked.
+## Step 2: Create a Client Secret
 
-## Step 1: Enable Public Client Flows
+1. In your app registration, go to **Certificates & secrets**
+2. Click **New client secret**
+3. Add a description (e.g., "MCP Server Dev") and expiration
+4. Click **Add**
+5. **Copy the Value immediately** — it won't be shown again. This is your `AZURE_CLIENT_SECRET`
 
-1. In your app registration, go to **Authentication**
-2. Under **Advanced settings**, set **Allow public client flows** to **Yes**
-3. Click **Save**
+## Step 3: Expose an API (Custom Scope)
 
-## Step 2: Update Platform Configuration
+This creates the custom scope that MCP clients will request during authentication.
 
-1. Still in **Authentication**
-2. Click **Add a platform** > **Mobile and desktop applications**
-3. Add redirect URI: `http://localhost:8000/auth/callback` (`AzureProvider`'s default)
-4. (Optional) Remove the **Web** platform if you only want public client flows
+1. Go to **Expose an API**
+2. Click **Set** next to "Application ID URI" — accept the default `api://<client-id>`
+3. Click **Add a scope**:
+   - **Scope name**: `access_as_user`
+   - **Who can consent**: Admins and users
+   - **Admin consent display name**: "Access Financial Data as User"
+   - **Admin consent description**: "Allows the MCP client to access university financial data on behalf of the signed-in user"
+   - **User consent display name**: "Access Financial Data"
+   - **User consent description**: "Access university financial data on your behalf"
+   - **State**: Enabled
+4. Click **Add scope**
 
-## Step 3: Remove Client Secret (Optional)
+The full scope URI will be: `api://<client-id>/access_as_user`
 
-If you're switching entirely to public client:
-1. Go to **Certificates & secrets**
-2. Delete the client secret created in Step 08
-3. Remove `AZURE_CLIENT_SECRET` from your `.env`
+## Step 4: Configure API Permissions
 
-## Step 4: Update .env
+1. Go to **API permissions**
+2. The default `Microsoft Graph > User.Read` permission is sufficient for this step
+3. No admin consent is needed for basic permissions
+
+## Step 5: Configure .env
 
 ```env
-AZURE_CLIENT_ID=<same as before>
-# AZURE_CLIENT_SECRET=  # Not needed for public client
-AZURE_TENANT_ID=<same as before>
+AZURE_CLIENT_ID=<Application (client) ID from Step 1>
+AZURE_CLIENT_SECRET=<Client secret Value from Step 2>
+AZURE_TENANT_ID=<Directory (tenant) ID from Step 1>
+AZURE_API_SCOPE=access_as_user
+SERVER_BASE_URL=http://localhost:8000
 ```
 
-## Step 5: Add User Allowlist
+## What is a Confidential Client?
 
-With public client flow, anyone with a valid Azure AD account can authenticate. Add an allowlist to restrict access:
+A **confidential client** has a client secret that is kept secure on the server. This is appropriate when:
 
-```env
-ALLOWED_USERS=alice@university.edu,bob@university.edu
-```
+- The server runs in a trusted environment (your server, not a user's browser)
+- You can keep the client secret secure
+- The server itself authenticates to Azure AD
 
-## PKCE (Proof Key for Code Exchange)
+The OAuth flow:
+1. User is redirected to Azure AD login
+2. User authenticates and consents to the `access_as_user` scope
+3. Azure AD sends an authorization code to the redirect URI
+4. **The server** exchanges the code for tokens using the client secret
+5. The server issues its own JWT to the MCP client
 
-PKCE is automatically handled by FastMCP's `AzureProvider` (inherited from its `OAuthProxy` base). Here's how it works:
+The client secret proves the server's identity to Azure AD. This is more secure than a public client flow, but requires secret management.
 
-1. Client generates a random `code_verifier` (43-128 chars)
-2. Client computes `code_challenge = BASE64URL(SHA256(code_verifier))`
-3. Authorization request includes `code_challenge`
-4. Token exchange includes `code_verifier`
-5. Azure AD verifies that `SHA256(code_verifier) == code_challenge`
+## Redirect URI for Production
 
-This prevents authorization code interception attacks because the attacker would need the `code_verifier` to exchange the code.
-
-## When to Use Confidential vs Public
-
-| Scenario | Recommendation |
-|----------|---------------|
-| Server-side app with secure storage | Confidential |
-| Desktop/CLI application | Public + PKCE |
-| Single-page app (browser) | Public + PKCE |
-| Multi-tenant SaaS | Confidential |
-| Development/testing | Either (public is simpler) |
+When deploying, update:
+- **Redirect URI** in Azure Portal to your production URL: `https://your-domain.com/auth/callback`
+- `SERVER_BASE_URL` in `.env` to match

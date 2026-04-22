@@ -1,7 +1,7 @@
 """
-Step 10: Directory MCP Server with Azure AD On-Behalf-Of (OBO) Flow
+Step 11: Directory MCP Server with Azure AD On-Behalf-Of (OBO) Flow
 
-Builds on the auth pattern from steps 08/09 by introducing OBO: the
+Builds on the auth pattern from steps 09/10 by introducing OBO: the
 server takes the user's MCP access token and exchanges it — against
 Azure's `/token` endpoint with the OBO grant — for a *new* token usable
 against Microsoft Graph. We then call Graph with that token, so Graph

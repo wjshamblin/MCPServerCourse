@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Step 10: Directory Server with Azure OBO</title>
+<title>Step 11: Directory Server with Azure OBO</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reset.min.css">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reveal.min.css">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/theme/night.min.css">
@@ -34,7 +34,7 @@
 
 <!-- Slide 1: Title -->
 <section>
-  <h1>Step 10</h1>
+  <h1>Step 11</h1>
   <h2>Directory Server with On-Behalf-Of</h2>
   <p>Reaching Microsoft Graph as the calling user</p>
 </section>
@@ -43,8 +43,8 @@
 <section>
   <h2>Why This Branch Grows</h2>
   <ul>
-    <li>Steps 07 &ndash; 09 were intentionally tiny (one file, one idea)</li>
-    <li>Step 10 keeps the same auth shape but now does something substantive: <strong>call Microsoft Graph on the user's behalf</strong></li>
+    <li>Steps 08 &ndash; 10 were intentionally tiny (one file, one idea)</li>
+    <li>Step 11 keeps the same auth shape but now does something substantive: <strong>call Microsoft Graph on the user's behalf</strong></li>
     <li>That needs real code, so <code>server.py</code> pulls in three supporting modules</li>
     <li>All composition-with-financial-server framing is gone &mdash; <code>server.py</code> <em>is</em> the directory server</li>
     <li>We build on FastMCP's <code>AzureProvider</code> + <code>EntraOBOToken</code> rather than hand-rolling the exchange</li>
@@ -94,8 +94,8 @@ User → MCP client → Our server
   <ul>
     <li>OBO <strong>requires</strong> the downstream call to <code>/token</code> be authenticated</li>
     <li>Public clients can't do that &mdash; they have no secret</li>
-    <li>So step 10 backs off to a confidential client (secret in the server's env)</li>
-    <li>Step 09's security add-ons (allowlist, audit) still apply in principle; this branch keeps focus on OBO, so they're not re-added here</li>
+    <li>So step 11 backs off to a confidential client (secret in the server's env)</li>
+    <li>Step 10's security add-ons (allowlist, audit) still apply in principle; this branch keeps focus on OBO, so they're not re-added here</li>
   </ul>
 </section>
 
@@ -117,7 +117,7 @@ pyproject.toml        # fastmcp[azure] + aiohttp
 <section>
   <h2>Azure App Setup</h2>
   <ol>
-    <li>App registration as in step 08: <em>Web</em> platform, redirect URI <code>http://localhost:8000/auth/callback</code>, client secret</li>
+    <li>App registration as in step 09: <em>Web</em> platform, redirect URI <code>http://localhost:8000/auth/callback</code>, client secret</li>
     <li>Manifest &rarr; <code>"requestedAccessTokenVersion": 2</code> (AzureProvider speaks v2)</li>
     <li><strong>Expose an API</strong> &rarr; keep <code>access_as_user</code></li>
     <li><strong>API permissions</strong> &rarr; Microsoft Graph &rarr; Delegated:
@@ -288,7 +288,7 @@ async def auth_user_resource() -> str: ...
     <li>Downstream scopes must be in <code>additional_authorize_scopes</code> so they're consented at login</li>
     <li>Preserves audit, least-privilege, and user identity across the network hop</li>
   </ul>
-  <p class="small" style="margin-top: 0.5em;">Next: step 11 leaves auth behind and introduces interactive UIs via MCP Apps.</p>
+  <p class="small" style="margin-top: 0.5em;">Next: step 12 leaves auth behind and introduces interactive UIs via MCP Apps.</p>
 </section>
 
 </div>

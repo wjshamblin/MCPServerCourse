@@ -1,550 +1,137 @@
-# Step 01: Hello World MCP Server
+# Step 11: Directory Server with Azure AD On-Behalf-Of (OBO)
 
-## What is MCP?
+First lesson where auth *does something substantive*. Instead of a
+hello-world shape, this server looks up real people in Microsoft Graph
+— **as the signed-in user**, not as the app. That's the
+On-Behalf-Of (OBO) flow.
 
-The **Model Context Protocol (MCP)** is an open standard that lets AI models interact with external tools and data sources through a unified interface. Instead of building custom integrations for every tool, MCP provides a single protocol that any AI client can use to discover and call tools exposed by any MCP server.
+## Why OBO?
 
-## What This Step Demonstrates
+The naive alternative is to call Graph with the **app's own
+credentials**. That works, but it means the server can access any
+directory data the app has been granted, regardless of who's actually
+calling. With OBO, the server exchanges the *user's* MCP access token
+for a *Graph-audience* token, then calls Graph with it. Graph sees
+requests as the user, so:
 
-- Creating a `FastMCP` server instance
-- Defining tools with the `@mcp.tool` decorator
-- Using Python type annotations for automatic JSON schema generation
-- Running the server with HTTP streamable transport
+- **Audit trails point at real users**, not a shared service account.
+- **Least privilege survives the hop**: the user can only see what
+  their delegated permissions allow, even though the server is doing
+  the work.
+- **No admin-consented application permissions required** — delegated
+  permissions are sufficient.
 
-## Tools
+## The OBO token dance
 
-| Tool | Description |
-|------|-------------|
-| `echo(message)` | Echoes a message back to the caller |
-| `add(a, b)` | Adds two integers and returns the result |
-| `greet(name, greeting?)` | Greets someone by name with an optional custom greeting |
-
-## Running the Server
-
-```bash
-# Install uv if you don't have it
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Create virtual environment and install dependencies
-uv sync
-
-# Run the server
-uv run python server.py
+```
+User → MCP Client → Directory Server → Azure AD /token (OBO) → Microsoft Graph
+                        │
+                  User's MCP token                  Graph-audience token
+                  (api://…/access_as_user)          (User.Read.All, …)
 ```
 
-The server starts on `http://0.0.0.0:8000`.
+1. User authenticates, gets an MCP token with `access_as_user` **plus
+   the Graph scopes** pre-consented via `additional_authorize_scopes`.
+2. Directory server receives the MCP token in `Authorization: Bearer …`.
+3. `EntraOBOToken([...])` (via `azure.identity.aio.OnBehalfOfCredential`)
+   exchanges it for a Graph-audience token.
+4. Server calls Graph API with the Graph token.
 
-## Connecting a Client
+## What's on this branch
 
-Add this to your Claude Desktop config (`claude_desktop_config.json`):
-
-```json
-{
-  "mcpServers": {
-    "hello-world": {
-      "url": "http://localhost:8000/mcp"
-    }
-  }
-}
+```
+.
+├── server.py              # AzureProvider + EntraOBOToken wiring
+├── ms_graph_client.py     # thin httpx wrapper around Graph
+├── directory_service.py   # coordinator that calls Graph with the OBO token
+├── models.py              # pydantic types for Graph results
+├── .env.example
+├── docs/
+│   ├── azure-setup-step09.md   # confidential client (prereq)
+│   ├── azure-setup-step10.md   # public client (step 10 variant)
+│   └── azure-setup-step11.md   # OBO-specific app setup (this step)
+└── README.md
 ```
 
-## Key Concepts
+Three helper modules and a server. The server stays small — Graph
+client and directory coordinator are split out because they're
+naturally testable in isolation.
 
-- **Tools** — Functions decorated with `@mcp.tool` that an AI client can discover and call. Each tool has a name, description, and input schema derived from the function signature.
-- **Transport** — How the client and server communicate. This step uses HTTP streamable transport, which runs a web server that clients connect to over HTTP.
-- **Schema Generation** — FastMCP automatically generates JSON schemas from Python type annotations and docstrings, so clients know what parameters each tool accepts.
+## Why confidential client here?
 
----
+Step 10 moved the auth demo to a public client. **OBO cannot run on a
+public client** — the token exchange requires the server to prove its
+identity with a client secret. So step 11 backs off to a confidential
+client. Step 10's security add-ons (allowlist, audit log) still apply
+in principle, but this branch keeps the focus on OBO and leaves them
+out.
 
-# Step 02: Resources and Prompts
-
-Building on the tools from step-01, this step introduces two more MCP primitives: **resources** and **prompts**.
-
-## Resources
-
-Resources are **read-only data** that a server exposes to clients. Unlike tools (which perform actions), resources provide information the LLM can read to inform its responses. Clients fetch resources by URI.
-
-### Resource Types
-
-| Type | URI Example | Description |
-|------|-------------|-------------|
-| **Static** | `resource://about` | Fixed content that doesn't change between reads |
-| **Dynamic** | `resource://server-time` | Content generated at read time (e.g., current timestamp) |
-| **Template** | `resource://greeting/{name}` | Parameterized URI — the client fills in `{name}` to get personalized content |
-
-### Resources Defined
-
-| Resource | URI | MIME Type | Description |
-|----------|-----|-----------|-------------|
-| `get_about` | `resource://about` | `text/plain` | Static server description |
-| `get_server_time` | `resource://server-time` | `application/json` | Current UTC time and Unix timestamp |
-| `get_greeting_resource` | `resource://greeting/{name}` | `text/plain` | Personalized greeting (template) |
-| `get_server_config` | `data://server-config` | `application/json` | Server metadata and capabilities |
-
-## Prompts
-
-Prompts are **reusable message templates** that help clients construct common interactions. They accept parameters and return pre-formatted messages the LLM can use as conversation starters or context.
-
-### Prompts Defined
-
-| Prompt | Parameters | Description |
-|--------|------------|-------------|
-| `code_review` | `language`, `code` | Generates a code review request with the code in a fenced block |
-| `summarize` | `text`, `style?` (default: `"concise"`) | Generates a summarization request with a configurable style |
-| `explain_concept` | `concept`, `audience?` (default: `"beginner"`) | Generates a multi-message explanation request with a system-like setup and assistant priming |
-
-### Prompt Return Types
-
-Prompts can return either a plain `str` (converted to a single user message) or a `list[Message]` for multi-message sequences. The `explain_concept` prompt demonstrates multi-message prompts by including both a user message and an assistant priming message.
-
-## Resources vs. Tools
-
-| | Resources | Tools |
-|---|-----------|-------|
-| **Purpose** | Provide data for the LLM to read | Perform actions or computations |
-| **Access** | Read-only | Can have side effects |
-| **Invocation** | Client reads by URI | Client calls with arguments |
-| **Discovery** | Listed with URIs and MIME types | Listed with names and input schemas |
-
-## New Concepts
-
-- **`@mcp.resource(uri)`** — Decorator that registers a function as a resource at the given URI.
-- **`mime_type`** — Tells the client how to interpret the resource content (e.g., `text/plain`, `application/json`).
-- **Resource templates** — URIs with `{parameter}` placeholders that the client fills in, e.g., `resource://greeting/{name}`.
-- **`@mcp.prompt`** — Decorator that registers a function as a reusable prompt template.
-- **`Message(content, role)`** — A prompt message. Defaults to `role="user"`. Use `role="assistant"` for priming messages that set up the assistant's response pattern.
-
----
-
-# Step 03: Context, Logging, and Elicitation
-
-This step introduces the **Context** object — a tool's connection back to the MCP client. Context enables tools to log messages, report progress, prompt the user for input, and access server resources during execution.
-
-## Context Injection
-
-When a tool function includes a parameter typed as `ctx: Context`, FastMCP automatically injects the context object at call time. The `ctx` parameter is **hidden from the tool's JSON schema**, so clients never see it or need to provide it.
+## The key FastMCP piece: `EntraOBOToken`
 
 ```python
-from fastmcp import Context
+from fastmcp.server.auth.providers.azure import AzureProvider, EntraOBOToken
+
+auth = AzureProvider(
+    client_id=AZURE_CLIENT_ID,
+    client_secret=AZURE_CLIENT_SECRET,
+    tenant_id=AZURE_TENANT_ID,
+    required_scopes=["access_as_user"],
+    additional_authorize_scopes=[
+        "openid", "profile", "email",
+        "https://graph.microsoft.com/User.Read.All",
+        "https://graph.microsoft.com/Directory.Read.All",
+    ],
+    base_url=SERVER_BASE_URL,
+)
 
 @mcp.tool
-async def my_tool(arg: str, ctx: Context) -> str:
-    await ctx.info("This log message is sent to the client")
-    return "done"
-```
-
-Tools that use Context methods **must** be defined with `async def` because the context methods are all asynchronous.
-
-## Context Methods
-
-| Method | Purpose |
-|--------|---------|
-| `ctx.info(message)` | Log an informational message to the client |
-| `ctx.warning(message)` | Log a warning message to the client |
-| `ctx.error(message)` | Log an error message to the client |
-| `ctx.debug(message)` | Log a debug message to the client |
-| `ctx.report_progress(progress, total)` | Report numeric progress (e.g., 3 of 10) |
-| `ctx.elicit(message, response_type)` | Request structured input from the user mid-execution |
-| `ctx.read_resource(uri)` | Read a server resource by URI from within a tool |
-| `ctx.sample(message)` | Ask the LLM to generate a completion (nested sampling) |
-
-## Elicitation
-
-`ctx.elicit()` pauses tool execution and asks the MCP client to prompt the user for input. The user's response comes back as an `ElicitResult` with two fields:
-
-- **`result.action`** — One of three values:
-  - `"accept"` — the user provided a response
-  - `"decline"` — the user declined to respond
-  - `"cancel"` — the user cancelled the operation
-- **`result.data`** — The user's response value (typed according to `response_type`)
-
-This is useful for destructive operations that need explicit user confirmation before proceeding.
-
-## New Tools
-
-| Tool | Parameters | Description |
-|------|------------|-------------|
-| `analyze_text` | `text` | Analyzes text (word count, character count, sentence count, top words) with progress reporting and logging |
-| `delete_records` | `table`, `confirm?` | Simulates a destructive delete with elicitation — prompts the user for confirmation unless `confirm=True` |
-| `process_items` | `items` | Processes a list of strings with per-item progress reporting |
-
----
-
-# Step 04: Financial Dataset & Query Server
-
-This step creates a synthetic university general ledger dataset and a database-backed MCP server to query it. The dataset is large enough (~500K+ rows) to overwhelm LLM context windows, which motivates the SQL-based query patterns used here and the NL2SQL approach in later steps.
-
-## Fund Accounting
-
-Universities use **fund accounting** — money is tracked in separate funds based on restrictions and purpose.
-
-| Fund Code | Fund Name | Type | Purpose |
-|-----------|-----------|------|---------|
-| 10 | General Operating | unrestricted | Primary university operating fund |
-| 20 | Restricted Grants | restricted | Sponsored research and grants |
-| 25 | Restricted Gifts | restricted | Donor-restricted gifts and endowment income |
-| 30 | Endowment | endowment | Endowment principal and investment returns |
-| 40 | Auxiliary Enterprises | auxiliary | Self-supporting operations (housing, dining, parking) |
-| 50 | Agency Funds | agency | Funds held on behalf of others (student organizations) |
-| 60 | Plant Funds | unrestricted | Capital projects and equipment |
-| 70 | Loan Funds | restricted | Student loan programs |
-
-## Chart of Accounts
-
-GL account codes follow standard numbering:
-
-| Range | Category |
-|-------|----------|
-| 1xxx | Assets (cash, receivables, investments, fixed assets) |
-| 2xxx | Liabilities (payables, accrued, deferred revenue, bonds) |
-| 3xxx | Equity (net assets by restriction level) |
-| 4xxx | Revenue (tuition, grants, gifts, investment, auxiliary, clinical) |
-| 5xxx-7xxx | Expenses (salaries, benefits, supplies, travel, equipment, services) |
-
-## Fiscal Year
-
-Higher education uses a **July-June fiscal year**:
-- FY2025 runs from July 1, 2024 through June 30, 2025
-- July = fiscal period 1, June = fiscal period 12
-
-## Encumbrances
-
-An **encumbrance** is a commitment to spend money that hasn't been paid yet (e.g., a purchase order). The dataset includes:
-- **Encumbrance entries** — recording the commitment
-- **Liquidations** — negative encumbrance amounts when the actual expense posts
-- **Types** — purchase orders, contracts, salary commitments, travel authorizations
-
-## Generating the Dataset
-
-```bash
-uv sync
-uv run python generate_data.py
-```
-
-Options:
-- `--output PATH` — Output database path (default: `data/university_gl.db`)
-- `--transactions N` — Number of transactions to generate (default: 500,000)
-
-The generated `.db` file is gitignored. Generation takes a few minutes and produces a ~100+ MB database.
-
-## Server Architecture
-
-| File | Purpose |
-|------|---------|
-| `server.py` | Main MCP server — tools, resources, and entry point |
-| `database.py` | Async SQLite layer with SQL validation and safety checks |
-| `config.py` | Pydantic settings loaded from environment variables / `.env` file |
-| `.env.example` | Template for environment variable configuration |
-
-## Tools
-
-| Tool | Description |
-|------|-------------|
-| `query_sql(sql)` | Execute a SQL SELECT query against the GL database. Results are capped at 2,000 rows with warnings for large result sets. |
-| `get_database_info()` | Returns all table names, column definitions, and row counts. Call this first to understand the schema. |
-
-## Resources
-
-### Schema Resources
-
-| URI | Description |
-|-----|-------------|
-| `schema://tables` | JSON summary of all tables with row counts and column counts |
-| `schema://{table_name}/columns` | Column details (name, type, nullable, primary key) for a specific table |
-
-### Domain Resources
-
-| URI | Description |
-|-----|-------------|
-| `domain://funds` | Explains university fund accounting types (unrestricted, restricted, endowment, etc.) |
-| `domain://accounts` | Chart of accounts structure — account number ranges and expense subcategories |
-| `domain://departments` | All departments organized by school |
-
-## SQL Safety
-
-The database layer enforces several safety measures:
-
-- **SELECT-only**: Queries must start with `SELECT`. All other statement types are rejected.
-- **Dangerous keyword blocking**: Patterns like `DROP`, `DELETE`, `INSERT`, `UPDATE`, `ALTER`, `CREATE`, `TRUNCATE`, `ATTACH`, SQL comments (`--`, `/*`) are blocked.
-- **Table allowlist**: Schema introspection only exposes tables in the allowlist (`gl_transactions`, `departments`, `chart_of_accounts`, `funds`, `grants`).
-- **Row limits**: Results are capped at `MAX_ROWS` (default 2,000). Queries exceeding `WARNING_ROWS` (default 100) trigger a client warning.
-
-## Running the Server
-
-```bash
-# Generate the database first
-uv run python generate_data.py
-
-# Copy and edit the environment config
-cp .env.example .env
-
-# Start the financial server
-uv run python server.py
-```
-
-The server starts on `http://0.0.0.0:8000` by default. Connect a client the same way as previous steps, pointing at `http://localhost:8000/mcp`.
-
----
-
-# Step 05: Natural Language to SQL
-
-This step adds an NL-to-SQL capability so users can ask questions in plain English. An LLM generates a SQL query, the server validates it with the same safety checks as `query_sql`, and executes it.
-
-## How It Works
-
-1. **Question** — User asks a natural language question via the `ask` tool
-2. **LLM generates SQL** — The question is sent to an LLM (Anthropic or OpenAI) along with the full database DDL as context
-3. **Validation** — The generated SQL passes through the same safety checks as manual queries (SELECT-only, dangerous keyword blocking)
-4. **Execution** — The validated query runs against the database and results are returned as JSON
-
-## DDL-Based Context
-
-Rather than using few-shot examples or retrieval, the NL-to-SQL pipeline sends the complete database DDL (CREATE TABLE statements with column comments) to the LLM. This gives the model full knowledge of:
-
-- All table and column names
-- Data types and constraints
-- Inline comments explaining codes, ranges, and relationships
-- Query generation hints (e.g., fiscal year conventions, entry type filters)
-
-## New Tool
-
-| Tool | Description |
-|------|-------------|
-| `ask(question)` | Ask a natural language question about university financial data. Converts to SQL, validates, executes, and returns results. |
-
-## Prompts
-
-Prompts are reusable templates that help clients construct common financial analysis requests.
-
-| Prompt | Parameters | Description |
-|--------|------------|-------------|
-| `budget_analysis` | `department`, `fiscal_year` (default 2025) | Budget vs actual analysis for a department |
-| `grant_status` | `status` (default "active") | Grant status report filtered by status |
-| `department_spending` | `fiscal_year` (default 2025) | Department spending comparison with subcategory breakdown |
-
-## Configuration
-
-Set `LLM_PROVIDER` in `.env` to choose the LLM backend:
-
-```bash
-# Anthropic (default)
-LLM_PROVIDER=anthropic
-ANTHROPIC_API_KEY=sk-ant-...
-ANTHROPIC_MODEL=claude-sonnet-4-5
-
-# OpenAI
-LLM_PROVIDER=openai
-OPENAI_API_KEY=sk-...
-OPENAI_MODEL=gpt-4o
-
-# OpenAI-compatible proxy
-LLM_PROVIDER=openai
-OPENAI_API_KEY=your-key
-OPENAI_BASE_URL=https://your-proxy.example.com/v1
-```
-
-## Architecture
-
-| File | Purpose |
-|------|---------|
-| `nl2sql.py` | NL-to-SQL pipeline — schema context, LLM calls, SQL extraction |
-| `server.py` | MCP server — `ask` tool, prompt templates |
-| `config.py` | LLM provider settings (API keys, model names, base URLs) |
-
----
-
-# Step 06: Lifespans, Tasks, and Composition
-
-This step refactors the financial server to use three advanced FastMCP features: **lifespans** for resource management, **background tasks** for long-running operations, and **server composition** for combining multiple servers.
-
-## Lifespans
-
-A lifespan manages resources that should be created once at startup and cleaned up on shutdown. Instead of opening a new database connection for every tool call, the lifespan opens a single connection when the server starts and closes it when the server stops.
-
-### The `@lifespan` Decorator
-
-```python
-from fastmcp.server.lifespan import lifespan
-
-@lifespan
-async def db_lifespan(server):
-    db = DatabasePool(config.database_path_resolved)
-    await db.connect()
-    try:
-        yield {"db": db}
-    finally:
-        await db.close()
-
-mcp = FastMCP("FinancialData", lifespan=db_lifespan)
-```
-
-The function runs up to `yield` at startup, and everything after `yield` runs at shutdown. The dict passed to `yield` becomes the **lifespan context** — tools access it via `ctx.lifespan_context`:
-
-```python
-def get_db(ctx: Context) -> DatabasePool:
-    return ctx.lifespan_context["db"]
-```
-
-### DatabasePool
-
-The `DatabasePool` class in `database.py` wraps a persistent `aiosqlite` connection. It provides the same `execute_query` and `get_table_info` methods as the per-request functions but reuses a single connection.
-
-## Background Tasks
-
-Tools decorated with `task=True` run as background tasks. The client receives a task ID immediately and can poll for progress and results.
-
-```python
-@mcp.tool(task=True)
-async def export_report(query_description: str, sql: str, ctx: Context) -> str:
+async def find_user(
+    query: str,
+    graph_token: str = EntraOBOToken(["https://graph.microsoft.com/User.Read.All"]),
+) -> str:
     ...
 ```
 
-Background tasks require the `tasks` extra:
+`EntraOBOToken([...])` is a FastMCP **dependency** used as a parameter
+default. Per request, FastMCP calls it, which triggers the OBO
+exchange and injects the resulting Graph token into the tool. Token
+caching is done by `azure.identity.aio.OnBehalfOfCredential` — keyed
+by user assertion + scopes, so repeated calls in the same session
+don't re-exchange.
 
-```bash
-uv add "fastmcp[tasks]>=2.14.0"
-```
+### Invariants worth knowing
 
-The `export_report` tool executes a query and formats the results as CSV. Because it allows up to 50,000 rows, it can take longer than a normal tool call, making it a good fit for background execution.
+- Every scope passed to `EntraOBOToken([...])` **must** also appear in
+  `additional_authorize_scopes`. Azure only lets you OBO-exchange for
+  scopes the user has already consented to.
+- Graph scopes must be fully qualified URIs (not short names).
+- `offline_access` is added automatically by `AzureProvider`, so
+  refresh tokens are available without extra config.
 
-## Server Composition
+## Setting it up
 
-FastMCP servers can be composed using `mount()`. The `server.py` file demonstrates mounting the financial server under a namespace:
+1. **Register the Azure app** — follow
+   [`docs/azure-setup-step11.md`](docs/azure-setup-step11.md). Critical
+   bits: confidential client (Web platform + secret), `access_as_user`
+   scope, **Delegated** Graph permissions (`User.Read.All`,
+   `Directory.Read.All`), and **admin consent granted** — without it,
+   OBO fails with `AADSTS65001`.
+2. **Copy `.env.example` → `.env`** and fill in the tenant, client ID,
+   client secret, and Graph scopes.
+3. **Run:**
+   ```bash
+   uv sync
+   python server.py
+   ```
+4. **Connect an MCP client.** Ask it to find a user — Graph sees the
+   call as you, and the result respects your directory permissions.
 
-```python
-from fastmcp import FastMCP
-from financial_server import mcp as financial_mcp
+## Docs reference
 
-main = FastMCP("UniversityServices")
-main.mount(financial_mcp, namespace="finance")
-```
-
-When mounted with a namespace, all tools, resources, and prompts from the child server are prefixed. For example, `query_sql` becomes `finance_query_sql`. This allows multiple servers to be combined without name collisions.
-
-## Architecture
-
-| File | Purpose |
-|------|---------|
-| `server.py` | Composition entry point — mounts the financial server under a namespace |
-| `financial_server.py` | Child server with lifespan and background task (mounted by `server.py`) |
-| `database.py` | Added `DatabasePool` class for persistent connections |
-
----
-
-## Step 08: Azure OAuth — Confidential Client
-
-Adds Azure AD authentication to the financial server.
-
-Reference: [FastMCP — Azure (Microsoft Entra ID) OAuth guide](https://gofastmcp.com/integrations/azure#azure-microsoft-entra-id-oauth--fastmcp).
-
-### What changes
-
-- Server now requires Azure AD authentication (when configured)
-- New `get_authenticated_user` tool returns user claims from the token
-- `AzureProvider` handles the Azure-specific OAuth flow (upstream endpoints, JWKS validation, v2 token quirks) in one object
-
-### Setup
-
-See `docs/azure-setup-step08.md` for the full Azure Portal walkthrough.
-
-### Key concepts
-
-- **Confidential client** — server has a client secret, proving its identity
-- **AzureProvider** — FastMCP's purpose-built Azure OAuth provider; wraps the generic `OAuthProxy` with Azure-correct defaults (v2 issuer, JWKS, audience, `offline_access`)
-- **Custom scope** — `access_as_user` (unprefixed — `AzureProvider` prepends `api://<client_id>/`) scopes the token to your API
-- **`additional_authorize_scopes`** — OIDC / Graph scopes requested during login but not validated on incoming tokens
-- **`get_access_token()`** — access the authenticated user's token in any tool
-
----
-
-## Step 09: Azure Public Client + Security
-
-### Public vs Confidential
-
-- **Confidential** (step-08): Server has a client secret. More traditional.
-- **Public** (step-09): No client secret. Uses PKCE instead. Simpler, and more secure for many scenarios.
-
-### What changes vs step 08
-
-- `AzureProvider` initialized without `client_secret` — public-client mode
-- `JWT_SIGNING_KEY` is now required: FastMCP uses it to sign the JWTs it issues to MCP clients (in confidential mode this key is derived from the client secret automatically)
-- PKCE is automatic via `AzureProvider`
-
-### Security additions
-
-- **User allowlist**: Only specified email addresses can use the server
-- **Audit logging**: Every query is logged with a SHA-256 hash chain for tamper detection
-- **PKCE**: Automatic with FastMCP — prevents authorization code interception
-
-See `docs/azure-setup-step09.md` for Azure Portal changes.
-
----
-
-## Step 10: Directory MCP Server with Azure AD On-Behalf-Of (OBO)
-
-This branch promotes a real, substantive demo: a directory-lookup server
-that calls Microsoft Graph **on behalf of** the signed-in user. OBO is
-the production-grade pattern that lets a multi-tier app preserve user
-identity (and permissions) across an upstream API call.
-
-Reference: [FastMCP — Azure On-Behalf-Of guide](https://gofastmcp.com/integrations/azure#on-behalf-of-obo).
-
-### Why OBO matters
-
-The naive alternative is for the server to call Graph with its *own*
-client credentials. That works, but Graph then sees every call as the
-app — the server can read anything the app is granted, regardless of
-who's actually calling. OBO instead exchanges the user's MCP access
-token for a *new* Graph token issued to the user, so Graph enforces the
-caller's permissions and audit trails stay coherent end to end.
-
-```
-MCP client → Server (api://<app>/access_as_user token)
-              │
-              └── POST /token  grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer
-                  with: assertion=<user MCP token>, requested_token_use=on_behalf_of
-              ↓
-              Graph token scoped to User.Read.All / Directory.Read.All for THIS user
-              ↓
-              GET https://graph.microsoft.com/v1.0/users?$search=...
-```
-
-### Pieces on this branch
-
-| File | Purpose |
+| Topic | Link |
 |---|---|
-| `server.py` | `AzureProvider` + `EntraOBOToken` wiring and MCP tools |
-| `ms_graph_client.py` | Thin `httpx.AsyncClient` wrapper for Graph |
-| `directory_service.py` | Thin coordinator that calls Graph with a pre-exchanged token |
-| `models.py` | Pydantic types for Graph results |
-
-The OBO token exchange itself isn't hand-rolled — FastMCP's
-`EntraOBOToken` dependency (backed by
-`azure.identity.aio.OnBehalfOfCredential`) performs the exchange per
-request, and caches the result keyed on `(user_token, scopes)`.
-
-### Tools / resources
-
-- `find_user(query)` — search Graph by name, email, or NetID (up to 10 results)
-- `get_user_groups(user_id)` — list group memberships for a user
-- `whoami()` — identity claims for the current caller (inbound MCP token)
-- `whoami_obo()` — side-by-side inbound vs. OBO-exchanged Graph token
-  claims, useful for *seeing* the exchange happen (`aud` and `scp` flip,
-  `oid`/`tid`/`upn` stay pinned to the same user)
-- `directory://auth/user` resource — same identity, exposed as a resource
-
-### Setup
-
-OBO requires a **confidential client** with Graph delegated permissions.
-See `docs/azure-setup-step10.md` for the full Portal walkthrough.
-Quick version:
-
-1. App registrations → New registration. Web platform, redirect URI
-   `http://localhost:8000/auth/callback` (`AzureProvider`'s default).
-2. Certificates & secrets → New client secret (copy the value).
-3. Expose an API → set `api://<client_id>` and add scope `access_as_user`.
-4. Manifest → set `"requestedAccessTokenVersion": 2`.
-5. API permissions → Microsoft Graph (Delegated): `User.Read.All`,
-   `Directory.Read.All`. Click **Grant admin consent**.
-6. Copy `.env.example` to `.env` and fill the three Azure values.
-7. `uv sync && python server.py`
+| FastMCP × Azure OBO guide | [gofastmcp.com/integrations/azure#on-behalf-of-obo](https://gofastmcp.com/integrations/azure#on-behalf-of-obo) |
+| `AzureProvider` | [gofastmcp.com/servers/auth/providers/azure](https://gofastmcp.com/servers/auth/providers/azure) |
+| Azure OBO specification | [learn.microsoft.com/entra/identity-platform/v2-oauth2-on-behalf-of-flow](https://learn.microsoft.com/entra/identity-platform/v2-oauth2-on-behalf-of-flow) |
+| Microsoft Graph — Users | [learn.microsoft.com/graph/api/user-list](https://learn.microsoft.com/graph/api/user-list) |
+| `azure.identity` OnBehalfOfCredential | [learn.microsoft.com/python/api/azure-identity/azure.identity.onbehalfofcredential](https://learn.microsoft.com/python/api/azure-identity/azure.identity.onbehalfofcredential) |
