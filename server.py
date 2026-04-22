@@ -1,5 +1,5 @@
 """
-Step 11: Minimal MCP Apps Demo
+Step 12: Minimal MCP Apps Demo
 
 The smallest possible server that demonstrates MCP Apps — interactive UIs
 rendered inside the AI client (Claude Desktop, Cursor, VS Code Copilot)
@@ -7,7 +7,7 @@ via Prefab UI components, backed by tools that the LLM can also call
 directly.
 
 This branch deliberately strips the auth, database, and OBO machinery
-from earlier steps (auth was already covered in 07–10) so the App
+from earlier steps (auth was already covered in 08–11) so the App
 mechanic is the only new concept on the page.
 
 The pattern:
@@ -35,7 +35,7 @@ This file ships three hand-built apps plus one Generative UI provider:
 demonstrates `ctx.report_progress()` (https://gofastmcp.com/servers/progress).
 
 Replace the inline auth stub at the top of the file with any of the
-auth proxies from steps 07–10 to gate the apps and tools.
+auth proxies from steps 08–11 to gate the apps and tools.
 
 Run:  python server.py
 
@@ -74,8 +74,8 @@ logger = logging.getLogger(__name__)
 # === Auth stub ===
 # This minimal demo runs without auth so you can poke at the App UI in
 # Claude Desktop / Cursor without setting up a tenant. To gate the
-# server, copy an auth block from steps 07 (Duke OIDC), 08/09 (Azure
-# OAuth), or 10 (Azure + OBO) and pass `auth=auth` to FastMCP(...).
+# server, copy an auth block from steps 08 (Duke OIDC), 09/10 (Azure
+# OAuth), or 11 (Azure + OBO) and pass `auth=auth` to FastMCP(...).
 auth = None
 
 
