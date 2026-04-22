@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Step 09: Public Client + PKCE + Security Add-Ons</title>
+<title>Step 10: Public Client + PKCE + Security Add-Ons</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reset.min.css">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reveal.min.css">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/theme/night.min.css">
@@ -34,14 +34,14 @@
 
 <!-- Slide 1: Title -->
 <section>
-  <h1>Step 09</h1>
+  <h1>Step 10</h1>
   <h2>Public Client + PKCE + Security Add-Ons</h2>
   <p>What to do when the server can't hold a secret</p>
 </section>
 
-<!-- Slide 2: What changes vs step 08 -->
+<!-- Slide 2: What changes vs step 09 -->
 <section>
-  <h2>What Changes vs Step 08</h2>
+  <h2>What Changes vs Step 09</h2>
   <ul>
     <li>Drop <code>upstream_client_secret</code> &mdash; this is a <em>public</em> client</li>
     <li>Azure validates request integrity with <strong>PKCE</strong> instead of a secret</li>
@@ -59,7 +59,7 @@
 <section>
   <h2>Confidential vs Public</h2>
   <table class="small">
-    <tr><th></th><th>Confidential (08)</th><th>Public (09)</th></tr>
+    <tr><th></th><th>Confidential (09)</th><th>Public (10)</th></tr>
     <tr><td>Has <code>client_secret</code>?</td><td>Yes, server-side</td><td>No</td></tr>
     <tr><td>Proof-of-possession</td><td>Secret at <code>/token</code></td><td>PKCE code_verifier</td></tr>
     <tr><td>Azure app type</td><td>Web</td><td>Mobile &amp; desktop</td></tr>
@@ -120,7 +120,7 @@ AUDIT_LOG_DIR=logs
 <section>
   <h2>Why <code>jwt_signing_key</code>?</h2>
   <ul>
-    <li>In step 08 the MCP-facing token was essentially the Azure JWT (secret-backed trust)</li>
+    <li>In step 09 the MCP-facing token was essentially the Azure JWT (secret-backed trust)</li>
     <li>Public clients can't issue that trust end-to-end, so FastMCP <em>mints its own</em> short-lived JWT for the MCP client</li>
     <li>That JWT needs a symmetric signing key &mdash; that's <code>jwt_signing_key</code></li>
     <li>Without it, <code>OAuthProxy</code> raises at startup: <code class="small">"jwt_signing_key is required when upstream_client_secret is not provided"</code></li>
@@ -255,7 +255,7 @@ python server.py
     <li>Audit both allowed and denied calls; a hash chain makes silent tampering detectable</li>
     <li>Still one file, still minimal &mdash; auth lessons end here</li>
   </ul>
-  <p class="small" style="margin-top: 0.5em;">Next: step 10 uses confidential-client auth as the foundation for On-Behalf-Of calls to Microsoft Graph.</p>
+  <p class="small" style="margin-top: 0.5em;">Next: step 11 uses confidential-client auth as the foundation for On-Behalf-Of calls to Microsoft Graph.</p>
 </section>
 
 </div>

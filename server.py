@@ -1,14 +1,14 @@
 """
-Step 09: Minimal Azure Public-Client Auth Demo + Security Add-Ons
+Step 10: Minimal Azure Public-Client Auth Demo + Security Add-Ons
 
-Builds on step 08 by switching from a confidential client to a public
+Builds on step 09 by switching from a confidential client to a public
 client with PKCE, then layering on two production-leaning concerns:
 
   1. **User allowlist** — only configured emails may call sensitive tools.
   2. **Tamper-detected audit log** — every sensitive call is appended to a
      SHA-256 hash chain (see audit.py) so any later tampering is detectable.
 
-Like steps 07 and 08, this branch deliberately strips the financial /
+Like steps 08 and 09, this branch deliberately strips the financial /
 database / NL-to-SQL machinery so the auth + security pieces are the only
 things on the page.
 
@@ -16,14 +16,14 @@ Reference:
   FastMCP Azure (Microsoft Entra ID) OAuth integration guide:
   https://gofastmcp.com/integrations/azure#azure-microsoft-entra-id-oauth--fastmcp
 
-What's new versus step 08:
+What's new versus step 09:
   - No `client_secret` → `AzureProvider` runs in public-client mode; PKCE
     proves identity to Azure. FastMCP requires an explicit `jwt_signing_key`
     in this mode (the confidential demo derived one from the secret).
   - `check_user_allowed()` gate around the privileged tool.
   - `audit.log(...)` on every privileged call (allowed or denied).
 
-Endpoints exposed at runtime are the same as step 08 (redirect URI is
+Endpoints exposed at runtime are the same as step 09 (redirect URI is
 `/auth/callback`).
 
 Run:  python server.py
