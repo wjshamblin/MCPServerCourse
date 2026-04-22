@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Step 08: Minimal Azure OAuth Demo (Confidential Client)</title>
+<title>Step 09: Minimal Azure OAuth Demo (Confidential Client)</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reset.min.css">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reveal.min.css">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/theme/night.min.css">
@@ -34,14 +34,14 @@
 
 <!-- Slide 1: Title -->
 <section>
-  <h1>Step 08</h1>
+  <h1>Step 09</h1>
   <h2>Azure AD OAuth &mdash; Confidential Client</h2>
-  <p>Same shape as step 07, different identity provider</p>
+  <p>Same shape as step 08, different identity provider</p>
 </section>
 
-<!-- Slide 2: Same shape as step 07 -->
+<!-- Slide 2: Same shape as step 08 -->
 <section>
-  <h2>Same Shape as Step 07</h2>
+  <h2>Same Shape as Step 08</h2>
   <ul>
     <li>Still a fresh, minimal, auth-only demo on top of a hello-world</li>
     <li>Still three surfaces: <code>hello</code>, <code>whoami</code>, <code>user://me</code></li>
@@ -55,7 +55,7 @@
 <section>
   <h2>Duke OIDC vs Azure AD</h2>
   <table class="small">
-    <tr><th></th><th>Duke (step 07)</th><th>Azure (step 08)</th></tr>
+    <tr><th></th><th>Duke (step 08)</th><th>Azure (step 09)</th></tr>
     <tr><td>Proxy class</td><td><code>OIDCProxy</code></td><td><code>OAuthProxy</code></td></tr>
     <tr><td>Discovery</td><td>Single <code>config_url</code></td><td>Explicit <code>upstream_*</code> URLs</td></tr>
     <tr><td>Token format</td><td>Opaque</td><td>JWT</td></tr>
@@ -239,9 +239,9 @@ python server.py
     <li>Confidential client = server holds the secret, exchanges code for tokens</li>
     <li>JWT validation is local (JWKS) &mdash; no per-call introspection</li>
     <li>FastMCP 3.x: <code>valid_scopes</code> + <code>extra_authorize_params["scope"]</code></li>
-    <li>Same minimal file shape as step 07 &mdash; only the auth block changes</li>
+    <li>Same minimal file shape as step 08 &mdash; only the auth block changes</li>
   </ul>
-  <p class="small" style="margin-top: 0.5em;">Next: step 09 drops the secret &mdash; public client + PKCE + security add-ons.</p>
+  <p class="small" style="margin-top: 0.5em;">Next: step 10 drops the secret &mdash; public client + PKCE + security add-ons.</p>
 </section>
 
 </div>

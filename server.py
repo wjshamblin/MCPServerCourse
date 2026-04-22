@@ -1,5 +1,5 @@
 """
-Step 08: Minimal Azure AD Auth Demo (Confidential Client)
+Step 09: Minimal Azure AD Auth Demo (Confidential Client)
 
 The smallest possible MCP server gated by Azure AD using the confidential
 client OAuth flow. The financial server, database, NL-to-SQL, and lifespan

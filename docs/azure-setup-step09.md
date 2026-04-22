@@ -1,4 +1,4 @@
-# Azure App Registration: Confidential Client (Step 08)
+# Azure App Registration: Confidential Client (Step 09)
 
 This guide walks through creating an Azure AD app registration for the financial MCP server.
 
