@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Step 07: Minimal Duke OIDC Auth Demo</title>
+<title>Step 08: Minimal Duke OIDC Auth Demo</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reset.min.css">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reveal.min.css">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/theme/night.min.css">
@@ -34,7 +34,7 @@
 
 <!-- Slide 1: Title -->
 <section>
-  <h1>Step 07</h1>
+  <h1>Step 08</h1>
   <h2>Minimal Duke OIDC Auth Demo</h2>
   <p>A fresh, auth-only restart</p>
 </section>
@@ -44,8 +44,8 @@
   <h2>Why This Branch Restarts</h2>
   <ul>
     <li>Auth is a big new idea &mdash; don't mix it with data, SQL, lifespans, NL-to-SQL, or composition</li>
-    <li>Steps 07 &ndash; 09 each isolate <em>one</em> auth flavor on top of a hello-world shape</li>
-    <li>When it's time to combine auth with real business logic, steps 10 and 11 return to richer servers</li>
+    <li>Steps 08 &ndash; 10 each isolate <em>one</em> auth flavor on top of a hello-world shape</li>
+    <li>When it's time to combine auth with real business logic, steps 11 and 12 return to richer servers</li>
     <li>Everything you need this step is in one file: <code>server.py</code></li>
   </ul>
 </section>
@@ -260,7 +260,7 @@ python server.py
     <li><strong>auth must be on the top-level FastMCP</strong> &mdash; it's what publishes the well-known endpoints</li>
     <li>Four deps, one file, one new idea</li>
   </ul>
-  <p class="small" style="margin-top: 0.5em;">Next: step 08 swaps Duke &rarr; Azure AD (confidential client).</p>
+  <p class="small" style="margin-top: 0.5em;">Next: step 09 swaps Duke &rarr; Azure AD (confidential client).</p>
 </section>
 
 </div>

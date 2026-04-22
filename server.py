@@ -1,5 +1,5 @@
 """
-Step 07: Minimal Duke OIDC Auth Demo
+Step 08: Minimal Duke OIDC Auth Demo
 
 The smallest possible MCP server gated by Duke's OIDC provider. Strip away
 everything except the auth wiring so the OIDC mechanics stay the focus.
