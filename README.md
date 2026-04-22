@@ -1,113 +1,121 @@
-# Step 04: Financial Dataset & Query Server
+# Step 07: Mount an Existing FastAPI App as an MCP Server
 
-This step creates a synthetic university general ledger dataset and a database-backed MCP server to query it. The dataset is large enough (~500K+ rows) to overwhelm LLM context windows, which motivates the SQL-based query patterns used here and the NL2SQL approach in later steps.
+This lesson remixes step 04. The domain is identical — the university
+general-ledger database, its schema, and the same fund-accounting
+content — but the framing is different. Instead of authoring MCP tools
+and resources directly, we build a plain **FastAPI** app and then wrap
+it with one line:
 
-## Fund Accounting
+```python
+mcp = FastMCP.from_fastapi(app=app)
+```
 
-Universities use **fund accounting** — money is tracked in separate funds based on restrictions and purpose.
+FastMCP reads the FastAPI app's OpenAPI spec and creates one MCP tool
+per endpoint — automatically.
 
-| Fund Code | Fund Name | Type | Purpose |
-|-----------|-----------|------|---------|
-| 10 | General Operating | unrestricted | Primary university operating fund |
-| 20 | Restricted Grants | restricted | Sponsored research and grants |
-| 25 | Restricted Gifts | restricted | Donor-restricted gifts and endowment income |
-| 30 | Endowment | endowment | Endowment principal and investment returns |
-| 40 | Auxiliary Enterprises | auxiliary | Self-supporting operations (housing, dining, parking) |
-| 50 | Agency Funds | agency | Funds held on behalf of others (student organizations) |
-| 60 | Plant Funds | unrestricted | Capital projects and equipment |
-| 70 | Loan Funds | restricted | Student loan programs |
+## The punchline
 
-## Chart of Accounts
+Compare this branch's `server.py` with the step 04 `server.py`. Same
+data layer (`config.py`, `database.py`, `data/university_gl.db`), same
+domain content (fund types, chart of accounts, departments). What
+changes is the framing: FastAPI first, MCP wrapping second.
 
-GL account codes follow standard numbering:
+One file, two interfaces:
 
-| Range | Category |
-|-------|----------|
-| 1xxx | Assets (cash, receivables, investments, fixed assets) |
-| 2xxx | Liabilities (payables, accrued, deferred revenue, bonds) |
-| 3xxx | Equity (net assets by restriction level) |
-| 4xxx | Revenue (tuition, grants, gifts, investment, auxiliary, clinical) |
-| 5xxx-7xxx | Expenses (salaries, benefits, supplies, travel, equipment, services) |
+| Interface | URL | Consumer |
+|---|---|---|
+| REST | `http://localhost:8000/query`, `/schema/tables`, `/domain/funds`, … | Normal HTTP clients, curl, dashboards |
+| MCP | `http://localhost:8000/mcp` | Claude Desktop, Cursor, VS Code Copilot, any MCP client |
 
-## Fiscal Year
+## The three pieces of `server.py`
 
-Higher education uses a **July-June fiscal year**:
-- FY2025 runs from July 1, 2024 through June 30, 2025
-- July = fiscal period 1, June = fiscal period 12
+1. **A plain FastAPI app.** Nothing MCP-specific. If all you wanted was
+   a REST API, you could deploy this as-is.
+2. **`FastMCP.from_fastapi(app=app)`.** One line. Every FastAPI route
+   becomes an MCP tool.
+3. **A combined ASGI app** that splats both route sets into a single
+   FastAPI so one `uvicorn` serves both.
 
-## Encumbrances
+## Endpoints → MCP tools
 
-An **encumbrance** is a commitment to spend money that hasn't been paid yet (e.g., a purchase order). The dataset includes:
-- **Encumbrance entries** — recording the commitment
-- **Liquidations** — negative encumbrance amounts when the actual expense posts
-- **Types** — purchase orders, contracts, salary commitments, travel authorizations
+| FastAPI route | MCP tool name (via `operation_id`) |
+|---|---|
+| `POST /query` | `query_sql` |
+| `GET /database/info` | `get_database_info` |
+| `GET /schema/tables` | `list_schema_tables` |
+| `GET /schema/tables/{table_name}/columns` | `get_schema_table_columns` |
+| `GET /domain/funds` | `get_domain_funds` |
+| `GET /domain/accounts` | `get_domain_accounts` |
+| `GET /domain/departments` | `get_domain_departments` |
 
-## Generating the Dataset
+## Why `operation_id` matters
+
+Without it, FastMCP invents tool names from the route + method:
+`list_tables_schema_tables_get`, `query_sql_query_post`, etc. Ugly and
+hard for the LLM to reason about. Always set an explicit
+`operation_id=` — FastMCP uses it verbatim as the tool name.
+
+```python
+# Good — explicit, readable tool name
+@app.get("/database/info", operation_id="get_database_info")
+def get_database_info() -> list[dict]: ...
+
+# Ugly tool name: list_tables_schema_tables_get
+@app.get("/schema/tables")
+def list_tables() -> list[dict]: ...
+```
+
+## Running
 
 ```bash
 uv sync
-uv run python generate_data.py
+python server.py
 ```
 
-Options:
-- `--output PATH` — Output database path (default: `data/university_gl.db`)
-- `--transactions N` — Number of transactions to generate (default: 500,000)
-
-The generated `.db` file is gitignored. Generation takes a few minutes and produces a ~100+ MB database.
-
-## Server Architecture
-
-| File | Purpose |
-|------|---------|
-| `server.py` | Main MCP server — tools, resources, and entry point |
-| `database.py` | Async SQLite layer with SQL validation and safety checks |
-| `config.py` | Pydantic settings loaded from environment variables / `.env` file |
-| `.env.example` | Template for environment variable configuration |
-
-## Tools
-
-| Tool | Description |
-|------|-------------|
-| `query_sql(sql)` | Execute a SQL SELECT query against the GL database. Results are capped at 2,000 rows with warnings for large result sets. |
-| `get_database_info()` | Returns all table names, column definitions, and row counts. Call this first to understand the schema. |
-
-## Resources
-
-### Schema Resources
-
-| URI | Description |
-|-----|-------------|
-| `schema://tables` | JSON summary of all tables with row counts and column counts |
-| `schema://{table_name}/columns` | Column details (name, type, nullable, primary key) for a specific table |
-
-### Domain Resources
-
-| URI | Description |
-|-----|-------------|
-| `domain://funds` | Explains university fund accounting types (unrestricted, restricted, endowment, etc.) |
-| `domain://accounts` | Chart of accounts structure — account number ranges and expense subcategories |
-| `domain://departments` | All departments organized by school |
-
-## SQL Safety
-
-The database layer enforces several safety measures:
-
-- **SELECT-only**: Queries must start with `SELECT`. All other statement types are rejected.
-- **Dangerous keyword blocking**: Patterns like `DROP`, `DELETE`, `INSERT`, `UPDATE`, `ALTER`, `CREATE`, `TRUNCATE`, `ATTACH`, SQL comments (`--`, `/*`) are blocked.
-- **Table allowlist**: Schema introspection only exposes tables in the allowlist (`gl_transactions`, `departments`, `chart_of_accounts`, `funds`, `grants`).
-- **Row limits**: Results are capped at `MAX_ROWS` (default 2,000). Queries exceeding `WARNING_ROWS` (default 100) trigger a client warning.
-
-## Running the Server
+Hit both interfaces:
 
 ```bash
-# Generate the database first
-uv run python generate_data.py
+# REST
+curl http://localhost:8000/schema/tables
+curl -X POST http://localhost:8000/query \
+     -H 'Content-Type: application/json' \
+     -d '{"sql": "SELECT COUNT(*) as n FROM gl_transactions"}'
 
-# Copy and edit the environment config
-cp .env.example .env
+# OpenAPI + Swagger UI (FastAPI's built-ins)
+open http://localhost:8000/docs
 
-# Start the financial server
-uv run python server.py
+# MCP — point your MCP client at
+http://localhost:8000/mcp
 ```
 
-The server starts on `http://0.0.0.0:8000` by default. Connect a client the same way as previous steps, pointing at `http://localhost:8000/mcp`.
+## When to use this pattern (and when not to)
+
+**Use `from_fastapi` when:**
+
+- You already have a FastAPI app and want to offer it to LLM clients
+  without duplicating the code.
+- You're prototyping — it takes one line to get an MCP server running.
+- Your REST surface is already shaped the way you'd want the MCP surface
+  to look.
+
+**Avoid it when:**
+
+- You're designing the MCP surface from scratch. Purpose-built MCP tools
+  with clean parameters almost always beat auto-converted endpoints.
+- Your REST API has lots of URL path parameters, nested query params,
+  or complex auth — the auto-conversion can get awkward.
+
+The FastMCP team explicitly recommends **hand-crafted MCP tools for
+production** — see their blog post
+["Stop Converting Your REST APIs to MCP"](https://www.jlowin.dev/blog/stop-converting-rest-apis-to-mcp).
+`from_fastapi` is for bootstrapping and prototyping.
+
+## Docs reference
+
+| Topic | Link |
+|---|---|
+| FastAPI integration | [gofastmcp.com/integrations/fastapi](https://gofastmcp.com/integrations/fastapi) |
+| OpenAPI integration (underlying mechanism) | [gofastmcp.com/integrations/openapi](https://gofastmcp.com/integrations/openapi) |
+| Mounting an MCP server inside FastAPI | [gofastmcp.com/integrations/fastapi#mounting-an-mcp-server](https://gofastmcp.com/integrations/fastapi#mounting-an-mcp-server) |
+| Route mapping (GET → Resource vs Tool) | [gofastmcp.com/integrations/fastapi#custom-route-mapping](https://gofastmcp.com/integrations/fastapi#custom-route-mapping) |
+| FastAPI docs | [fastapi.tiangolo.com](https://fastapi.tiangolo.com) |

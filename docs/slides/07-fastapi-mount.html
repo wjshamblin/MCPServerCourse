@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Step 07: Mount a FastAPI App as MCP</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reset.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reveal.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/theme/night.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/plugin/highlight/monokai.min.css">
+<style>
+  .reveal { font-size: 32px; }
+  .reveal h1 { text-transform: none; font-size: 1.8em; }
+  .reveal h2 { text-transform: none; font-size: 1.4em; }
+  .reveal h3 { text-transform: none; font-size: 1.1em; }
+  .reveal pre { width: 100%; margin: 0.4em 0; }
+  .reveal pre code { max-height: 400px; font-size: 0.75em; line-height: 1.35; }
+  .reveal ul, .reveal ol { text-align: left; font-size: 0.9em; }
+  .reveal li { margin-bottom: 0.3em; }
+  .reveal p { font-size: 0.9em; }
+  .reveal .small { font-size: 0.65em; }
+  .reveal .highlight { color: #42affa; }
+  .reveal table { margin: 0 auto; font-size: 0.8em; }
+  .reveal table th, .reveal table td { padding: 0.2em 0.6em; border: 1px solid #444; }
+  .reveal table th { background: #333; }
+  .reveal .two-col { display: flex; gap: 2em; }
+  .reveal .two-col > * { flex: 1; }
+  .reveal .slides section { overflow: hidden; }
+  .reveal .docs { font-size: 0.55em; color: #888; margin-top: 0.6em; border-top: 1px solid #333; padding-top: 0.4em; }
+  .reveal .docs a { color: #42affa; text-decoration: none; }
+  .reveal .docs a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<div class="reveal">
+<div class="slides">
+
+<!-- Slide 1: Title -->
+<section>
+  <h1>Step 07</h1>
+  <h2>Mount a FastAPI App as an MCP Server</h2>
+  <p>Same data as step 04. Same logic. Different framing.</p>
+</section>
+
+<!-- Slide 2: The punchline -->
+<section>
+  <h2>The Punchline</h2>
+  <pre><code class="language-python" data-trim data-noescape>
+from fastmcp import FastMCP
+
+mcp = FastMCP.from_fastapi(app=app)
+  </code></pre>
+  <ul>
+    <li>One line.</li>
+    <li>FastMCP reads your FastAPI app's OpenAPI spec.</li>
+    <li>Every route becomes an MCP tool &mdash; automatically.</li>
+  </ul>
+  <p class="docs">📚 <a href="https://gofastmcp.com/integrations/fastapi">gofastmcp.com/integrations/fastapi</a></p>
+</section>
+
+<!-- Slide 3: Why this matters -->
+<section>
+  <h2>Why This Matters</h2>
+  <ul>
+    <li>You probably <em>already have</em> a FastAPI app. That's thousands of existing deployments.</li>
+    <li>Rewriting it as MCP tools means duplicated code, drift, two test suites.</li>
+    <li><code>from_fastapi</code> lets one codebase serve both REST clients (curl, dashboards, browsers) <em>and</em> MCP clients (Claude Desktop, Cursor, VS Code).</li>
+    <li>Under the hood: FastMCP's OpenAPI integration, which also works for any OpenAPI spec &mdash; not just FastAPI.</li>
+  </ul>
+  <p class="docs">📚 <a href="https://gofastmcp.com/integrations/openapi">OpenAPI integration</a></p>
+</section>
+
+<!-- Slide 4: What this branch ships -->
+<section>
+  <h2>What This Branch Ships</h2>
+  <ul>
+    <li>Same data layer as step 04: <code>config.py</code>, <code>database.py</code>, <code>data/university_gl.db</code></li>
+    <li>Same domain content: fund types, chart of accounts, departments</li>
+    <li>Rewritten <code>server.py</code>: FastAPI first, <code>from_fastapi</code> wrap, combined ASGI app</li>
+    <li>One uvicorn process serves <strong>both</strong>:
+      <ul class="small">
+        <li>REST at <code>/query</code>, <code>/schema/...</code>, <code>/domain/...</code></li>
+        <li>MCP at <code>/mcp</code></li>
+      </ul>
+    </li>
+  </ul>
+</section>
+
+<!-- Slide 5: The three pieces -->
+<section>
+  <h2>Three Pieces of <code>server.py</code></h2>
+  <ol>
+    <li><strong>A plain FastAPI app.</strong> Nothing MCP-specific. Deploy as REST if you want.</li>
+    <li><strong><code>FastMCP.from_fastapi(app=app)</code>.</strong> One line. OpenAPI → MCP tools.</li>
+    <li><strong>A combined ASGI app</strong> that splats both route sets:
+      <pre class="small"><code class="language-python" data-trim data-noescape>
+combined = FastAPI(
+    lifespan=mcp_app.lifespan,
+    routes=[*mcp_app.routes, *app.routes],
+)
+      </code></pre>
+    </li>
+  </ol>
+</section>
+
+<!-- Slide 6: The FastAPI app -->
+<section>
+  <h2>Piece 1: The FastAPI App</h2>
+  <pre><code class="language-python" data-trim data-noescape>
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, Field
+
+app = FastAPI(title="University GL API", version="1.0.0")
+
+class QueryRequest(BaseModel):
+    sql: str = Field(..., description="A read-only SELECT or WITH query.")
+
+@app.post("/query", response_model=QueryResponse, operation_id="query_sql")
+async def query_sql(request: QueryRequest) -> QueryResponse:
+    """Execute a read-only SELECT query."""
+    rows, total = await execute_query(
+        config.database_path_resolved, request.sql, max_rows=config.max_rows
+    )
+    return QueryResponse(total_rows=total, returned_rows=len(rows),
+                        truncated=total > config.max_rows, data=rows)
+  </code></pre>
+  <p class="small">Totally ordinary FastAPI. Pydantic models, type hints, docstring, <code>HTTPException</code>.</p>
+</section>
+
+<!-- Slide 7: operation_id matters -->
+<section>
+  <h2>Set <code>operation_id</code> on Every Route</h2>
+  <pre><code class="language-python" data-trim data-noescape>
+# Good — explicit, readable MCP tool name
+@app.get("/database/info", operation_id="get_database_info")
+def get_database_info() -> list[dict]: ...
+
+# Bad — auto-generated tool name: list_tables_schema_tables_get
+@app.get("/schema/tables")
+def list_tables() -> list[dict]: ...
+  </code></pre>
+  <ul>
+    <li>FastMCP uses <code>operation_id</code> verbatim as the tool name</li>
+    <li>Without it, names are constructed from <code>function_name + path + method</code></li>
+    <li>LLMs reason better with clean tool names</li>
+  </ul>
+  <p class="docs">📚 <a href="https://gofastmcp.com/integrations/fastapi">FastAPI integration: Key Considerations</a></p>
+</section>
+
+<!-- Slide 8: The wrap -->
+<section>
+  <h2>Piece 2: Wrap It</h2>
+  <pre><code class="language-python" data-trim data-noescape>
+from fastmcp import FastMCP
+
+mcp = FastMCP.from_fastapi(
+    app=app,
+    name="FinancialData (via FastAPI)",
+)
+  </code></pre>
+  <p>That's literally it. FastMCP now exposes 7 tools:</p>
+  <pre class="small" style="text-align: left;"><code data-trim data-noescape>
+query_sql
+get_database_info
+list_schema_tables
+get_schema_table_columns
+get_domain_funds
+get_domain_accounts
+get_domain_departments
+  </code></pre>
+</section>
+
+<!-- Slide 9: Combining both surfaces -->
+<section>
+  <h2>Piece 3: Serve Both from One Process</h2>
+  <pre><code class="language-python" data-trim data-noescape>
+mcp_app = mcp.http_app(path="/mcp")
+
+combined_app = FastAPI(
+    title="University GL — REST + MCP",
+    lifespan=mcp_app.lifespan,          # ← critical
+    routes=[*mcp_app.routes, *app.routes],
+)
+  </code></pre>
+  <ul>
+    <li><code>mcp.http_app(path="/mcp")</code> returns a mountable ASGI app</li>
+    <li>Splat both route sets into a new FastAPI</li>
+    <li>Borrow the MCP app's lifespan &mdash; <strong>required</strong> for session manager init</li>
+  </ul>
+  <p class="docs">📚 <a href="https://gofastmcp.com/integrations/fastapi#mounting-an-mcp-server">Mounting an MCP server</a></p>
+</section>
+
+<!-- Slide 10: Run it -->
+<section>
+  <h2>Run It &mdash; Both Sides Work</h2>
+  <pre><code class="language-bash" data-trim data-noescape>
+$ python server.py
+Uvicorn running on http://0.0.0.0:8000
+
+# REST side
+$ curl http://localhost:8000/schema/tables
+[{"table":"chart_of_accounts","rows":72,"columns":5}, ...]
+
+# Swagger UI for free
+$ open http://localhost:8000/docs
+
+# MCP side
+$ # point Claude Desktop / Cursor at http://localhost:8000/mcp
+  </code></pre>
+  <p class="small">One codebase. One process. Two first-class interfaces.</p>
+</section>
+
+<!-- Slide 11: When to use it -->
+<section>
+  <h2>When To Use <code>from_fastapi</code></h2>
+  <div class="two-col">
+    <div>
+      <h3>✅ Good fit</h3>
+      <ul class="small">
+        <li>You already have a FastAPI app</li>
+        <li>You're prototyping / bootstrapping</li>
+        <li>Your REST shape is close to the MCP shape you'd want</li>
+        <li>You want Swagger UI + MCP from the same code</li>
+      </ul>
+    </div>
+    <div>
+      <h3>⚠️ Not a great fit</h3>
+      <ul class="small">
+        <li>Designing the MCP surface from scratch</li>
+        <li>Lots of path params / complex query params</li>
+        <li>Auth not already solved in the FastAPI app</li>
+        <li>Production-quality LLM interfaces</li>
+      </ul>
+    </div>
+  </div>
+  <p class="small">The FastMCP team recommends hand-crafted tools for production. See <a href="https://www.jlowin.dev/blog/stop-converting-rest-apis-to-mcp">"Stop Converting Your REST APIs to MCP"</a>.</p>
+</section>
+
+<!-- Slide 12: Compare with step 04 -->
+<section>
+  <h2>Compare with Step 04</h2>
+  <div class="two-col">
+    <div>
+      <h3>Step 04: MCP-native</h3>
+      <pre class="small"><code class="language-python" data-trim>
+@mcp.tool
+async def query_sql(sql, ctx):
+    ...
+
+@mcp.resource("schema://tables")
+async def list_tables():
+    ...
+      </code></pre>
+    </div>
+    <div>
+      <h3>Step 07: FastAPI-first</h3>
+      <pre class="small"><code class="language-python" data-trim>
+@app.post("/query", operation_id="query_sql")
+async def query_sql(r: QueryRequest):
+    ...
+
+@app.get("/schema/tables",
+    operation_id="list_schema_tables")
+async def list_schema_tables():
+    ...
+      </code></pre>
+    </div>
+  </div>
+  <p class="small">Same data layer. Same domain. Two authoring styles — pick whichever your team already knows.</p>
+</section>
+
+<!-- Slide 13: Key takeaways -->
+<section>
+  <h2>Key Takeaways</h2>
+  <ul>
+    <li><code>FastMCP.from_fastapi(app)</code> turns any FastAPI app into an MCP server in one line</li>
+    <li>Under the hood it's the OpenAPI integration &mdash; any OpenAPI spec works, not just FastAPI</li>
+    <li>Always set <code>operation_id=</code> on your FastAPI routes &mdash; that's the MCP tool name</li>
+    <li>Combine both surfaces with the routes-splat pattern; borrow the MCP lifespan</li>
+    <li>Great for prototyping; purpose-built MCP tools still win for production LLM UX</li>
+  </ul>
+</section>
+
+<!-- Slide 14: Docs reference -->
+<section>
+  <h2>Docs Reference</h2>
+  <table>
+    <tr><th>Topic</th><th>URL</th></tr>
+    <tr><td>FastAPI integration</td><td><a href="https://gofastmcp.com/integrations/fastapi">gofastmcp.com/integrations/fastapi</a></td></tr>
+    <tr><td>OpenAPI integration</td><td><a href="https://gofastmcp.com/integrations/openapi">gofastmcp.com/integrations/openapi</a></td></tr>
+    <tr><td>Mounting inside FastAPI</td><td><a href="https://gofastmcp.com/integrations/fastapi#mounting-an-mcp-server">fastapi#mounting-an-mcp-server</a></td></tr>
+    <tr><td>Route mapping (GET ↔ Resource)</td><td><a href="https://gofastmcp.com/integrations/fastapi#custom-route-mapping">fastapi#custom-route-mapping</a></td></tr>
+    <tr><td>FastAPI docs</td><td><a href="https://fastapi.tiangolo.com">fastapi.tiangolo.com</a></td></tr>
+  </table>
+</section>
+
+</div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reveal.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/plugin/highlight/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/plugin/notes/notes.min.js"></script>
+<script>
+Reveal.initialize({ hash: true, plugins: [RevealHighlight, RevealNotes] });
+</script>
+</body>
+</html>
