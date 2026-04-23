@@ -377,6 +377,74 @@ def get_lab_spending() -> dict:
   <p class="docs">📚 <a href="https://gofastmcp.com/apps/generative">Generative UI</a> · <a href="https://gofastmcp.com/apps/development">Local preview: <code>fastmcp dev apps</code></a></p>
 </section>
 
+<!-- Slide 19b: Generative UI — how streaming works -->
+<section>
+  <h2>Streaming &mdash; The Magic Trick</h2>
+  <pre class="small" style="text-align: left; box-shadow: none;">
+LLM emits tokens →  host fires ontoolinputpartial (partial args)
+                                     │
+                                     ▼
+                     renderer extracts growing `code` string
+                                     │
+                                     ▼
+                    browser-side Pyodide runs whatever compiles
+                    (syntax errors? just wait for more tokens)
+                                     │
+                                     ▼
+                    user sees Heading, then chart, then cards,
+                    appear one after another, live
+                                     │
+                                     ▼
+              ✓ LLM finishes → server-side Pyodide validates the
+                    complete code, replaces the preview.
+  </pre>
+  <p class="small">The renderer iframe is created <em>in parallel with the tool call</em>, so it's already running when the first token arrives.</p>
+  <p class="docs">📚 <a href="https://gofastmcp.com/apps/generative">Generative UI — How It Works</a></p>
+</section>
+
+<!-- Slide 19c: What the LLM actually writes -->
+<section>
+  <h2>What the LLM Actually Writes</h2>
+  <pre><code class="language-python" data-trim data-noescape>
+from prefab_ui.components import Column, Row, Heading, Text, Badge, Card, CardContent
+from prefab_ui.components.charts import BarChart, ChartSeries
+from prefab_ui.app import PrefabApp
+
+with PrefabApp() as app:
+    with Column(gap=6, css_class="p-6"):
+        Heading("Q3 Revenue Report")
+        BarChart(
+            data=[{"month": "Jul", "revenue": 42000},
+                  {"month": "Aug", "revenue": 51000},
+                  {"month": "Sep", "revenue": 63000}],
+            series=[ChartSeries(data_key="revenue", label="Revenue")],
+            x_axis="month",
+        )
+        with Row(gap=4):
+            with Card():
+                with CardContent():
+                    Text("Total", css_class="text-sm text-muted-foreground")
+                    Heading("$156,000")
+  </code></pre>
+  <p class="small">Real Python &mdash; loops, f-strings, computation. Prefab's library gives it charts, tables, cards, badges, layout.</p>
+  <p class="docs">📚 <a href="https://gofastmcp.com/apps/generative">Generative UI — What the LLM Writes</a></p>
+</section>
+
+<!-- Slide 19d: Prefab Patterns catalog -->
+<section>
+  <h2>Prefab Patterns &mdash; Where to Go Next</h2>
+  <table class="small">
+    <tr><th>Category</th><th>Patterns</th><th>Where in this branch</th></tr>
+    <tr><td>Charts</td><td>Bar / Line / Area / Pie / Radar / Sparkline</td><td>Step 13 capstone</td></tr>
+    <tr><td>Data Tables</td><td>Sortable, searchable, paginated <code>DataTable</code></td><td>Step 13 capstone</td></tr>
+    <tr><td>Status Displays</td><td><code>Card</code> + <code>Badge</code> + <code>Progress</code> + <code>Dot</code></td><td>Deploy Console</td></tr>
+    <tr><td>Reactive Displays</td><td>Feature toggles, <code>Tabs</code>, <code>Accordion</code>, <code>If/Elif/Else</code></td><td>Progress app (status strip)</td></tr>
+    <tr><td>Interactive Patterns</td><td>Forms, <code>CallTool</code> round-trips</td><td>Counter, Deploy Console</td></tr>
+  </table>
+  <p class="small">FastMCP ships a <strong>copy-paste catalog</strong> of these patterns — every category has a complete working example you can drop into a server.</p>
+  <p class="docs">📚 <a href="https://gofastmcp.com/apps/patterns">gofastmcp.com/apps/patterns</a></p>
+</section>
+
 <!-- Slide 20: Run it -->
 <section>
   <h2>Run It</h2>

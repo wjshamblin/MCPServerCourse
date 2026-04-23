@@ -15,7 +15,9 @@ Like steps 08–10, this branch deliberately strips earlier-step machinery
 | MCP Apps overview | [gofastmcp.com/apps/overview](https://gofastmcp.com/apps/overview) |
 | `FastMCPApp` (interactive apps) | [gofastmcp.com/apps/interactive-apps](https://gofastmcp.com/apps/interactive-apps) |
 | Prefab UI (components + actions) | [gofastmcp.com/apps/prefab](https://gofastmcp.com/apps/prefab) |
+| Prefab Patterns (copy-paste catalog) | [gofastmcp.com/apps/patterns](https://gofastmcp.com/apps/patterns) |
 | Generative UI (LLM writes the UI) | [gofastmcp.com/apps/generative](https://gofastmcp.com/apps/generative) |
+| `GenerativeUI` provider reference | [gofastmcp.com/apps/providers/generative](https://gofastmcp.com/apps/providers/generative) |
 | Local app preview (`fastmcp dev apps`) | [gofastmcp.com/apps/development](https://gofastmcp.com/apps/development) |
 | `ctx.report_progress()` | [gofastmcp.com/servers/progress](https://gofastmcp.com/servers/progress) |
 | `ctx.elicit()` | [gofastmcp.com/servers/elicitation](https://gofastmcp.com/servers/elicitation) |
@@ -155,21 +157,130 @@ component tree server-side and the client just renders it.
 
 [**Generative UI**](https://gofastmcp.com/apps/generative) flips this
 around: the LLM *writes the Prefab code at runtime*, in a Pyodide
-sandbox, streamed into the client token by token as it generates.
+sandbox, streamed into the client token by token as it generates. The
+user watches the UI assemble itself — components appearing as the
+model types them.
+
+### The one-liner
 
 ```python
 from fastmcp.apps.generative import GenerativeUI
 mcp.add_provider(GenerativeUI())
 ```
 
-That one line registers two tools:
+That single line registers three things:
 
-| Tool | Purpose |
+| Thing | What it is |
 |---|---|
-| `generate_prefab_ui(code, data=?)` | Executes Prefab Python code in a Pyodide sandbox and renders the result as a Prefab app. Supports streaming — partial code runs browser-side as the LLM types. |
-| `search_prefab_components(query)` | Lets the LLM discover what components exist (`BarChart`, `Card`, `Metric`, …) before writing code. |
+| `generate_prefab_ui(code, data=?)` | A tool that accepts Prefab Python code, executes it in a Pyodide sandbox, and renders the result as a Prefab app. Supports streaming. |
+| `search_prefab_components(query)` | A tool that introspects the installed `prefab_ui` package so the LLM can discover what components exist (always up to date with the version on your server). |
+| The generative renderer | A `ui://` resource with browser-side Pyodide that does the progressive rendering. |
 
-Paired with a **seed-data tool** so the lecture demo is reproducible:
+### How streaming actually works
+
+This is the mechanic that makes Generative UI feel magical. When the
+LLM calls `generate_prefab_ui`, **the renderer iframe is created in
+parallel with the tool call** — so the app is already running when
+partial arguments start flowing. As the LLM generates each token:
+
+1. The MCP host forwards partial tool arguments to the app via
+   `ontoolinputpartial`.
+2. The renderer extracts the growing `code` string.
+3. Browser-side Pyodide executes whatever **compiles successfully** so
+   far — bad syntax is just ignored until more tokens arrive.
+4. The user sees components appear as they're written: first the
+   `Heading`, then the `BarChart`, then the stat cards, etc.
+
+When the LLM finishes, the server runs the **complete** code in a
+server-side Pyodide sandbox for validation, and the renderer replaces
+the streaming preview with the final server-validated result.
+
+### What the LLM actually writes
+
+The tool description bundled with `GenerativeUI` includes code
+examples that teach the LLM the Prefab patterns. A typical generation
+looks like:
+
+```python
+from prefab_ui.components import Column, Row, Heading, Text, Badge, Card, CardContent
+from prefab_ui.components.charts import BarChart, ChartSeries
+from prefab_ui.app import PrefabApp
+
+with PrefabApp() as app:
+    with Column(gap=6, css_class="p-6"):
+        Heading("Q3 Revenue Report")
+
+        BarChart(
+            data=[
+                {"month": "Jul", "revenue": 42000},
+                {"month": "Aug", "revenue": 51000},
+                {"month": "Sep", "revenue": 63000},
+            ],
+            series=[ChartSeries(data_key="revenue", label="Revenue")],
+            x_axis="month",
+        )
+
+        with Row(gap=4):
+            with Card():
+                with CardContent():
+                    Text("Total", css_class="text-sm text-muted-foreground")
+                    Heading("$156,000")
+            with Card():
+                with CardContent():
+                    Text("Growth", css_class="text-sm text-muted-foreground")
+                    Badge("+18%", variant="success")
+```
+
+The model writes *real* Python — loops, f-strings, computation,
+helper functions. Prefab's component library gives it charts, tables,
+forms, cards, badges, and layout primitives to work with. No JSX-like
+intermediate representation; the code that runs is the code the LLM
+wrote.
+
+### The component search workflow
+
+Before writing code, the LLM can call `search_prefab_components` to
+discover what's available:
+
+```
+search_prefab_components("Chart")
+→ 7 components matching 'Chart':
+  AreaChart  — from prefab_ui.components.charts import AreaChart
+  BarChart   — from prefab_ui.components.charts import BarChart
+  LineChart  — from prefab_ui.components.charts import LineChart
+  PieChart   — from prefab_ui.components.charts import PieChart
+  ...
+```
+
+Passing `detail=True` returns full field descriptions and docstrings
+so the LLM can pick the right props without guessing. The search tool
+**introspects the actual classes at runtime**, so it's always in sync
+with whatever `prefab-ui` version is installed on your server — even
+if the docs haven't caught up yet.
+
+### Passing your own data
+
+`generate_prefab_ui` accepts a `data=` parameter. Anything passed
+here becomes a global variable in the sandbox:
+
+```python
+# The LLM's generated code can reference `spending` directly.
+await generate_prefab_ui(
+    code="""
+        from prefab_ui.components.charts import BarChart, ChartSeries
+        ...
+        BarChart(data=spending, series=[ChartSeries(data_key='amount')], x_axis='category')
+    """,
+    data={"spending": [{"category": "Equipment", "amount": 12400}, ...]},
+)
+```
+
+That's how this branch's seed-data tool plays in — the LLM calls
+`get_lab_spending()`, then passes the result into
+`generate_prefab_ui(data={"spending": ...})` so the generated chart
+uses real numbers, not inventions.
+
+### The seed-data tool
 
 ```python
 @mcp.tool
@@ -187,17 +298,89 @@ def get_lab_spending() -> dict:
 
 The LLM calls `get_lab_spending`, optionally calls
 `search_prefab_components("Chart")` to check what's available, then
-calls `generate_prefab_ui(code=..., data={"spending": ...})`. You watch
-the chart build up as the code streams.
+calls `generate_prefab_ui(code=..., data={"spending": ...})`. You
+watch the chart build up as the code streams.
 
-**Sandbox note:** Pyodide includes the Python stdlib + Prefab only.
-No `numpy` / `pandas` / `requests`. If the LLM tries to import one,
-the sandbox raises `ImportError` and the LLM typically retries with a
-different approach.
+### Configuration
+
+`GenerativeUI` accepts a few options for customizing tool names or
+disabling the component search tool:
+
+```python
+GenerativeUI(
+    tool_name="generate_prefab_ui",                   # default
+    components_tool_name="search_prefab_components",  # default
+    include_components_tool=True,                     # default
+)
+```
+
+Set `include_components_tool=False` if you want to ship only the
+renderer and keep the LLM on a leash (it'll have to rely on whatever
+components it already knows).
+
+### Requirements & sandbox limits
+
+- **`fastmcp[apps]`** installs `prefab-ui` and everything the provider
+  needs. The server-side Pyodide sandbox additionally requires **Deno**,
+  which installs automatically on first use.
+- The browser-side renderer loads **Pyodide from CDN**. The CSP is
+  configured automatically by the provider — no manual setup.
+- **The Pyodide sandbox ships only the Python stdlib + Prefab.** No
+  `numpy`, `pandas`, `requests`, or anything else that needs native
+  extensions. If the LLM tries to import one, it gets `ImportError`
+  and typically retries with a different approach.
 
 **See also:** [Generative UI](https://gofastmcp.com/apps/generative)
+· [GenerativeUI provider reference](https://gofastmcp.com/apps/providers/generative)
 · [Prefab component reference](https://gofastmcp.com/apps/prefab)
 · [Local preview with `fastmcp dev apps`](https://gofastmcp.com/apps/development)
+
+## Prefab Patterns — where to go next
+
+The four apps above are concrete examples of a few [**Prefab
+patterns**](https://gofastmcp.com/apps/patterns). FastMCP ships a
+copy-paste catalog of common tool-UI patterns, organized by what
+you're building. Use this as the "what do I reach for when I want to
+build _X_" reference after this step:
+
+| Category | Patterns | Where it shows up in this branch |
+|---|---|---|
+| **Charts** | Bar, Line, Area, Pie, Radar, Radial, Scatter, Sparkline, Histogram | Not used in this branch — explore when you need visualizations. Generative UI can emit any of them. |
+| **Data Tables** | Sortable `DataTable` with search + pagination | Not used — the Deploy Console uses flat `Card` grids. Step 13 uses `DataTable` extensively. |
+| **Status Displays** | `Card` + `Badge` + `Progress` + `Dot` dashboards | **Deploy Console** — stat cards, environment pills, success Alert banner. |
+| **Reactive Displays** | `Switch` + `If/Elif/Else`, `Tabs`, `Accordion`, state-driven layout | **Progress** app (status strip uses `If/Elif/Else`). Tabs + Accordion are untouched here. |
+| **Interactive Patterns** | `Form` + `Input`/`Select`/`Textarea` with `CallTool` round-trips | **Counter** + **Deploy Console** demonstrate the `CallTool` → `on_success` → `SetState` round-trip. A full `Form` isn't in this branch. |
+
+### Patterns not shown here (worth exploring)
+
+Things that appear in the Patterns catalog but that this branch doesn't
+demonstrate — good "go try this" exercises:
+
+- **Area charts with `curve="smooth"`** for time-series displays.
+- **Pie / donut charts** with `inner_radius=60`.
+- **`DataTable`** with `search=True, paginated=True, page_size=15`.
+- **Feature toggles** — `Switch(name="flag")` bound to reactive state,
+  `If(Rx("flag"))` to conditionally show sections. No server call needed.
+- **`Tabs` + `Tab`** for organizing a one-tool multi-section UI.
+- **`Accordion` + `AccordionItem`** for collapsible detail rows.
+- **Contact-form-style submissions** — `Form(on_submit=CallTool(...))`
+  with `Input`, `Select`, `Textarea`, and `RESULT` piped into state.
+
+### Pick your flavor
+
+The Patterns page and the feature comparison below help you decide
+*which* Prefab mechanic fits a given problem:
+
+| You want to... | Reach for |
+|---|---|
+| Show a one-shot chart or table with no interaction | `@mcp.tool(app=True)` returning a `PrefabApp`. No `FastMCPApp` needed. |
+| Build an interactive multi-tool UI (buttons, forms, server round-trips) | `FastMCPApp` + `@app.tool(model=True)` + `@app.ui()`. This branch's Counter / Progress / Deploy all use this. |
+| Let the LLM construct bespoke UIs per request | `GenerativeUI()` provider. |
+| Ship a full custom HTML app | `@mcp.tool(app=AppConfig(resource_uri="..."))`. Escape hatch for when Prefab doesn't fit — see `/apps/low-level`. |
+
+**See also:** [Prefab Patterns catalog](https://gofastmcp.com/apps/patterns)
+· [Prefab component reference](https://prefab.prefect.io/docs/components)
+· [Prefab UI](https://gofastmcp.com/apps/prefab)
 
 ## Running
 
