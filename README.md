@@ -1,203 +1,85 @@
-# Step 12: MCP Apps
+# Step 13: Financial Projections Dashboard — Capstone
 
-An MCP server that demonstrates **[MCP Apps](https://gofastmcp.com/apps/overview)**:
-interactive UIs rendered inside the AI client (Claude Desktop, Cursor,
-VS Code Copilot) via [Prefab UI](https://gofastmcp.com/apps/prefab)
-components, backed by tools that the LLM can also call directly.
+A research-admin financial dashboard built entirely with **FastMCP +
+Prefab UI**. Four tabs, SQLite-backed, interactive in any MCP client
+that renders MCP Apps (Claude Desktop, Cursor, VS Code Copilot).
 
-Like steps 08–10, this branch deliberately strips earlier-step machinery
-(database, auth, OBO) so the App mechanic is the only new concept.
+This is the capstone for the MCP Apps arc: every pattern from step 12
+— `FastMCPApp`, `@app.tool(model=True)`, reactive `STATE`, `CallTool`
+actions, `ForEach`, `DataTable`, multiple charts — composed into a
+single, production-shaped app. The backing tools are all LLM-callable,
+so a user can either open the dashboard *or* ask *"what's my 12-month
+surplus / deficit?"* and get the same answer.
 
-## Quick reference: FastMCP docs
+## What the dashboard shows
 
-| Topic | Link |
+Four tabs, switched via a Prefab `Tabs` container:
+
+| Tab | Contents |
 |---|---|
-| MCP Apps overview | [gofastmcp.com/apps/overview](https://gofastmcp.com/apps/overview) |
-| `FastMCPApp` (interactive apps) | [gofastmcp.com/apps/interactive-apps](https://gofastmcp.com/apps/interactive-apps) |
-| Prefab UI (components + actions) | [gofastmcp.com/apps/prefab](https://gofastmcp.com/apps/prefab) |
-| Generative UI (LLM writes the UI) | [gofastmcp.com/apps/generative](https://gofastmcp.com/apps/generative) |
-| Local app preview (`fastmcp dev apps`) | [gofastmcp.com/apps/development](https://gofastmcp.com/apps/development) |
-| `ctx.report_progress()` | [gofastmcp.com/servers/progress](https://gofastmcp.com/servers/progress) |
-| `ctx.elicit()` | [gofastmcp.com/servers/elicitation](https://gofastmcp.com/servers/elicitation) |
-| `Context` (logging, progress, elicit) | [gofastmcp.com/servers/context](https://gofastmcp.com/servers/context) |
+| **Overview** | Four stat cards (Available, Projected Expenses, Projected Incoming, Surplus / Deficit), a stacked monthly-spending bar chart (personnel vs non-personnel), a fund-balance donut, and a sortable funds table. |
+| **Grants & Funds** | One `Card` per fund with project dates, budget period, F&A rate, Plan vs Actual ITD, a budget-utilization `Progress` bar, additional-funding rows, and a personnel roster. |
+| **Personnel** | A horizontal stacked-bar effort chart (one row per person, one series per fund) plus per-fund personnel tables. |
+| **Transactions** | A projected fund-flow summary and a filterable, sortable transactions table. The Fund and Category filters round-trip to `get_transactions` — the one place where a UI change triggers a real server call. |
 
-## What you get
+## Files
 
-`server.py` is the only Python file. It exposes **four UI surfaces**
-plus a few plain tools:
+```
+.
+├── server.py     # FastMCP server + FastMCPApp + UI view (4 tabs)
+├── db.py         # SQLite schema, deterministic seed, query functions
+├── data/fin.db   # auto-created on first run
+├── docs/
+│   └── slides/13-financial-dashboard.html
+├── pyproject.toml
+└── README.md
+```
 
-| Surface | Purpose |
-|---|---|
-| **Counter** app | One-screen interactive UI: live counter with +1 / +10 / Reset / Refresh buttons. The smallest end-to-end example. |
-| **Progress** app | `Loader` / `Ring` / `Progress` components driven by a 4-stage server-side tool chain, so progress is *real* (not faked client-side). |
-| **Deploy Console** app | Kitchen-sink dashboard: stat cards, environment-status pills, a Dialog-gated deploy action, and server-side [`ctx.elicit()`](https://gofastmcp.com/servers/elicitation) for rollback confirmation. |
-| **Generative UI** provider | Lets the LLM write Prefab UI code at runtime in a Pyodide sandbox. Paired with a seed-data tool (`get_lab_spending`) for a reproducible "visualize this data" demo. |
+Two Python files. No build step, no `npm install`, no browser-side
+bundling. The sandboxed renderer inside the MCP host takes the wire
+payload from `@dashboard_app.ui()` and turns it into DOM — that's it.
 
-### Plain tools (no UI)
+## The six data tools
 
-These are regular LLM-callable tools included alongside the apps so
-students can contrast the two surfaces:
+All are registered with `model=True` on the same `FastMCPApp`, so the
+LLM can drive the dashboard conversationally:
 
 | Tool | Purpose |
 |---|---|
-| `hello(name)` | Smallest possible `@mcp.tool` — a baseline for "this is an MCP tool." |
-| `add(a, b)` | Type-annotated numeric tool — shows the auto-generated schema. |
-| `render_report(pages)` | Simulates a long-running render and streams progress via [`ctx.report_progress()`](https://gofastmcp.com/servers/progress). Clients with native progress UI (Claude Desktop, Cursor) show a real spinner/bar while it runs. Pairs conceptually with the Progress app. |
+| `get_funds_summary()` | List funds with balances and a Healthy/Watch status. |
+| `get_fund_detail(fund_id)` | One fund + personnel roster + additional-funding rows. |
+| `get_personnel()` | People with their effort allocations across funds. |
+| `get_transactions(fund_id?, category?, sort_by, sort_order)` | Filterable, sortable transaction list with a total. |
+| `get_spending_summary()` | Aggregate projections: available, expenses, incoming, surplus / deficit. |
+| `get_monthly_spending(months)` | Monthly totals split personnel vs non-personnel. |
 
-## The MCP Apps pattern
+Plus one UI tool: **`financial_dashboard`** — the dashboard itself.
 
-See [**Interactive Apps**](https://gofastmcp.com/apps/interactive-apps)
-for the full treatment. In ~10 lines:
+## What this branch demonstrates
 
-```python
-from fastmcp.apps import FastMCPApp
-from prefab_ui.app import PrefabApp
-from prefab_ui.components import Button, Column, Heading, Metric
-from prefab_ui.actions.mcp import CallTool
+This is the proof that **FastMCP + Prefab is enough to build a real
+dashboard**. Concretely, the pieces that land on the page:
 
-counter_app = FastMCPApp("Counter")
-
-@counter_app.tool(model=True)        # callable by UI AND by the LLM
-def bump_counter(by: int = 1) -> dict:
-    ...
-
-@counter_app.ui()                    # the UI entry point
-async def counter_view() -> PrefabApp:
-    with Column(...) as view:
-        Heading("Counter", level=2)
-        Button("+1", on_click=CallTool(bump_counter, arguments={"by": 1}, ...))
-    return view
-
-mcp.add_provider(counter_app)        # register the app on the main server
-```
-
-Three pieces to internalise:
-
-1. **[`FastMCPApp`](https://gofastmcp.com/apps/interactive-apps)** bundles a UI + the tools that back it.
-2. **`@app.tool(model=True)`** marks a function as callable by both the UI
-   (via [`CallTool`](https://gofastmcp.com/apps/prefab) actions) and the LLM directly.
-   (`model=False` would hide it from the LLM — useful for purely UI-internal helpers.)
-3. **`@app.ui()`** returns a [Prefab UI](https://gofastmcp.com/apps/prefab) component tree.
-   Buttons fire `CallTool(...)` actions, which round-trip back through MCP to invoke
-   the matching tool, then update UI state with `SetState(...)`.
-
-## App: Counter
-
-The minimal end-to-end demo. One screen, one `Metric`, four buttons.
-Every button fires a `CallTool(...)` that round-trips to an `@app.tool`
-function on the server and pipes the return value into `SetState(...)`
-to update the UI.
-
-The state lives *client-side* (under the key `"count"`). The Refresh
-button seeds it on first render by calling `get_counter()` and copying
-the result back into state.
-
-**See also:** [FastMCPApp](https://gofastmcp.com/apps/interactive-apps)
-· [Prefab actions (`CallTool`, `SetState`, `ShowToast`)](https://gofastmcp.com/apps/prefab)
-
-## App: Progress
-
-A visually richer demo. Three panels, top to bottom:
-
-1. **Spinner gallery** — all five `Loader` variants (`spin`, `dots`,
-   `pulse`, `bars`, `ios`) animating at once.
-2. **Live run** — a big `Ring` plus a horizontal `Progress` bar that
-   animate through four server-backed stages when you click
-   **Render Report**. Each stage is a real `CallTool` round-trip —
-   the percentages you see come from the server, not a client-side
-   timer.
-3. **Status strip** — an `If / Elif / Else` that shows "Running…",
-   "✓ Complete", or "Idle" based on state.
-
-The 4-stage chain is built programmatically via `_build_stage_chain`,
-which right-nests `CallTool(...)` actions through their `on_success`
-branches so the code reads left-to-right instead of collapsing into a
-pyramid of callbacks.
-
-Companion plain tool: **`render_report(pages)`** — uses
-`ctx.report_progress(done, total)` so clients with native progress UI
-(Claude Desktop, Cursor) show a real spinner/bar.
-
-**See also:** [Progress reporting](https://gofastmcp.com/servers/progress)
-· [`Context` API](https://gofastmcp.com/servers/context)
-· [Prefab UI components](https://gofastmcp.com/apps/prefab)
-
-## App: Deploy Console
-
-The kitchen-sink showcase. One screen, six patterns:
-
-- **Stat cards** — `Grid` of `Card` + `Dot` + `Metric` for a flashy
-  dashboard row (services up, active deploys, 24h failures).
-- **Environment pills** — `Badge` + `Dot` whose colors flip reactively
-  (`healthy`/`degraded`/`down`) via nested ternaries on reactive state,
-  *without* a server round-trip.
-- **Dialog-gated deploy** — A Prefab `Dialog` wrapping a destructive
-  action. First child = trigger button; remaining children = body.
-- **Server-side elicitation** — The Rollback button fires a tool that
-  calls `ctx.elicit(message, response_type=RollbackConfirmation)`. The
-  confirmation UI is rendered by your **MCP client**, not by Prefab —
-  elicitation is a protocol feature, not a UI gadget.
-- **Conditional Alert banner** — `If(STATE.last_deploy)` renders a
-  success banner only after a deploy completes.
-- **Toasts** — `ShowToast(...)` for in-UI success/error feedback.
-
-All three backing tools are `model=True`, so the LLM can drive the
-console conversationally: *"deploy orders-api"* / *"roll back billing"*.
-
-**See also:** [Elicitation](https://gofastmcp.com/servers/elicitation)
-· [Prefab Dialog / Alert / Badge](https://gofastmcp.com/apps/prefab)
-· [`Context` API](https://gofastmcp.com/servers/context)
-
-## Generative UI
-
-The three apps above are **hand-built** — you define the Prefab
-component tree server-side and the client just renders it.
-
-[**Generative UI**](https://gofastmcp.com/apps/generative) flips this
-around: the LLM *writes the Prefab code at runtime*, in a Pyodide
-sandbox, streamed into the client token by token as it generates.
-
-```python
-from fastmcp.apps.generative import GenerativeUI
-mcp.add_provider(GenerativeUI())
-```
-
-That one line registers two tools:
-
-| Tool | Purpose |
-|---|---|
-| `generate_prefab_ui(code, data=?)` | Executes Prefab Python code in a Pyodide sandbox and renders the result as a Prefab app. Supports streaming — partial code runs browser-side as the LLM types. |
-| `search_prefab_components(query)` | Lets the LLM discover what components exist (`BarChart`, `Card`, `Metric`, …) before writing code. |
-
-Paired with a **seed-data tool** so the lecture demo is reproducible:
-
-```python
-@mcp.tool
-def get_lab_spending() -> dict:
-    """Return last-quarter (Q1 2026) departmental lab spending."""
-    # 15 deterministic rows across Jan–Mar × 5 categories, plus a
-    # pre-computed summary (total / top_category / mom_change_pct).
-```
-
-**Try this prompt in your client:**
-
-> *"Call `get_lab_spending`, then visualize it as a bar chart grouped
-> by category, with stat cards for total spend, the top-spending
-> category, and MoM change."*
-
-The LLM calls `get_lab_spending`, optionally calls
-`search_prefab_components("Chart")` to check what's available, then
-calls `generate_prefab_ui(code=..., data={"spending": ...})`. You watch
-the chart build up as the code streams.
-
-**Sandbox note:** Pyodide includes the Python stdlib + Prefab only.
-No `numpy` / `pandas` / `requests`. If the LLM tries to import one,
-the sandbox raises `ImportError` and the LLM typically retries with a
-different approach.
-
-**See also:** [Generative UI](https://gofastmcp.com/apps/generative)
-· [Prefab component reference](https://gofastmcp.com/apps/prefab)
-· [Local preview with `fastmcp dev apps`](https://gofastmcp.com/apps/development)
+- **`FastMCPApp`** bundles one UI + its backing tools.
+- **`@app.ui()`** returns a `PrefabApp` — the whole view tree is built
+  once, seeded with data from synchronous DB calls.
+- **`Tabs` / `Tab`** organize the four panels with a reactive `tab`
+  state key.
+- **`DataTable` + `DataTableColumn`** for sortable, paginated tables —
+  no hand-rolled HTML, no `<thead>/<tbody>` plumbing.
+- **`BarChart`, `LineChart`, `PieChart`** from `prefab_ui.components.charts`,
+  with `stacked=True`, `horizontal=True`, `inner_radius=55` (donuts),
+  etc.
+- **`ForEach`** iterates over state — so each fund's card is a single
+  template instead of four near-duplicates.
+- **`Rx` pipes** — `STATE.summary.total_available.currency()` formats
+  numbers at render time, no Python f-strings needed.
+- **`CallTool(...)`** in the Transactions filter — changing the Fund
+  dropdown fires `get_transactions(fund_id=...)` and pipes the result
+  into state via `SetState`.
+- **`Progress`** for budget-utilization bars on each fund card.
+- **`Badge`, `Dot`, `Card`, `Metric`** — the Deploy-Console toolkit,
+  now doing real dashboard work.
 
 ## Running
 
@@ -206,32 +88,35 @@ uv sync
 python server.py
 ```
 
-Connect from Claude Desktop, Cursor, or VS Code Copilot. Clients that
-support MCP Apps will offer to open the **Counter**, **Progress**, and
-**Deploy** apps. Clients that don't still see the underlying tools and
-can call them directly.
+The first run creates `data/fin.db` and seeds it. Subsequent runs skip
+re-seeding unless you delete the file.
 
-For local iteration without a full MCP client, use
-[`fastmcp dev apps`](https://gofastmcp.com/apps/development) to preview
-Apps in a browser.
+Connect from Claude Desktop / Cursor / VS Code Copilot. In the app
+picker you'll see **Financial Dashboard** — open it to get the
+interactive view. Or just ask the model directly:
 
-## Adding auth
+> *"How much is my lab projected to spend on personnel next year?"*
+> *"Show me all transactions over $300 against the R01."*
+> *"Which fund has the tightest runway?"*
 
-This demo runs unauthenticated so you can poke at the UI without
-configuring a tenant. Drop in any `auth=...` block from steps 08–11 and
-you're done — the Apps mechanic is orthogonal to auth.
+All seven tools are callable; the model routes the question to the
+right ones.
 
-## New dependencies
+## Re-seed the database
 
-- `fastmcp[apps]` — the Apps extension to FastMCP (includes the Pyodide
-  sandbox used by Generative UI)
-- `prefab-ui` — declarative UI components
-- **Deno** — required at runtime by the Pyodide sandbox that Generative
-  UI uses to validate LLM-generated code. Install once via
-  `brew install deno` (or [deno.land](https://deno.land)).
+Edit `data/fin.db` away or delete it; it will re-seed on next start.
+Or force a reseed without restarting:
 
-The repo ships a one-line `deno.json` (`{"nodeModulesDir": "auto"}`)
-in the project root so Deno auto-installs the `npm:pyodide` package
-on first use. Without that file, Deno 2.x refuses npm imports and
-`generate_prefab_ui` fails with *"Could not find a matching package
-for 'npm:pyodide@0.27.4'"*.
+```bash
+python db.py --force
+```
+
+## Docs reference
+
+| Topic | Link |
+|---|---|
+| MCP Apps overview | [gofastmcp.com/apps/overview](https://gofastmcp.com/apps/overview) |
+| `FastMCPApp` | [gofastmcp.com/apps/interactive-apps](https://gofastmcp.com/apps/interactive-apps) |
+| Prefab UI (components + actions) | [gofastmcp.com/apps/prefab](https://gofastmcp.com/apps/prefab) |
+| Prefab component reference | [prefab.prefect.io/docs/components](https://prefab.prefect.io/docs/components) |
+| Local preview: `fastmcp dev apps` | [gofastmcp.com/apps/development](https://gofastmcp.com/apps/development) |

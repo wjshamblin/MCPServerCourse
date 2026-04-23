@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Step 13: Financial Dashboard — Capstone</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reset.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reveal.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/theme/night.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/plugin/highlight/monokai.min.css">
+<style>
+  .reveal { font-size: 32px; }
+  .reveal h1 { text-transform: none; font-size: 1.8em; }
+  .reveal h2 { text-transform: none; font-size: 1.4em; }
+  .reveal h3 { text-transform: none; font-size: 1.1em; }
+  .reveal pre { width: 100%; margin: 0.4em 0; }
+  .reveal pre code { max-height: 420px; font-size: 0.72em; line-height: 1.35; }
+  .reveal ul, .reveal ol { text-align: left; font-size: 0.9em; }
+  .reveal li { margin-bottom: 0.3em; }
+  .reveal p { font-size: 0.9em; }
+  .reveal .small { font-size: 0.65em; }
+  .reveal .highlight { color: #42affa; }
+  .reveal table { margin: 0 auto; font-size: 0.8em; }
+  .reveal table th, .reveal table td { padding: 0.2em 0.6em; border: 1px solid #444; }
+  .reveal table th { background: #333; }
+  .reveal .two-col { display: flex; gap: 2em; }
+  .reveal .two-col > * { flex: 1; }
+  .reveal .slides section { overflow: hidden; }
+  .reveal .docs { font-size: 0.55em; color: #888; margin-top: 0.6em; border-top: 1px solid #333; padding-top: 0.4em; }
+  .reveal .docs a { color: #42affa; text-decoration: none; }
+  .reveal .docs a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<div class="reveal">
+<div class="slides">
+
+<!-- Slide 1: Title -->
+<section>
+  <h1>Step 13</h1>
+  <h2>Financial Dashboard &mdash; Capstone</h2>
+  <p>Everything from the MCP Apps arc, assembled into one real dashboard.</p>
+</section>
+
+<!-- Slide 2: What we build -->
+<section>
+  <h2>What We Build</h2>
+  <ul>
+    <li>A four-tab research-admin financial dashboard</li>
+    <li>SQLite-backed (deterministic seed, 4 funds &middot; 4 people &middot; 52 transactions)</li>
+    <li>Six data tools + one UI tool, all on one <code>FastMCPApp</code></li>
+    <li>Every data tool is <code>model=True</code> &mdash; same surface for human and LLM</li>
+  </ul>
+  <p class="small">Two Python files. No npm, no bundling, no React.</p>
+</section>
+
+<!-- Slide 3: The four tabs -->
+<section>
+  <h2>Four Tabs</h2>
+  <table class="small">
+    <tr><th>Tab</th><th>Contents</th></tr>
+    <tr><td>Overview</td><td>Stat cards · stacked monthly bars · fund-balance donut · funds table</td></tr>
+    <tr><td>Grants &amp; Funds</td><td>Per-fund cards · utilization bars · additional-funding · personnel</td></tr>
+    <tr><td>Personnel</td><td>Horizontal stacked effort chart · per-fund rosters</td></tr>
+    <tr><td>Transactions</td><td>Fund-flow summary · filterable sortable table (live <code>CallTool</code>)</td></tr>
+  </table>
+</section>
+
+<!-- Slide 4: Files -->
+<section>
+  <h2>Two Files</h2>
+  <pre><code class="language-text" data-trim data-noescape>
+.
+├── server.py     # FastMCP + FastMCPApp + the UI view
+├── db.py         # schema, seed, queries (stdlib sqlite3)
+├── data/fin.db   # auto-created on first run
+└── docs/slides/13-financial-dashboard.html
+  </code></pre>
+  <p class="small">Every prior step built up to this. No new FastMCP concepts on this slide deck &mdash; only composition.</p>
+</section>
+
+<!-- Slide 5: The six data tools -->
+<section>
+  <h2>Six Data Tools (all <code>model=True</code>)</h2>
+  <pre><code class="language-python" data-trim data-noescape>
+dashboard_app = FastMCPApp("Financial Dashboard")
+
+@dashboard_app.tool(model=True)
+def get_funds_summary() -> list[dict]: ...
+
+@dashboard_app.tool(model=True)
+def get_fund_detail(fund_id: str) -> dict: ...
+
+@dashboard_app.tool(model=True)
+def get_personnel() -> list[dict]: ...
+
+@dashboard_app.tool(model=True)
+def get_transactions(fund_id=None, category=None,
+                     sort_by="date", sort_order="desc") -> dict: ...
+
+@dashboard_app.tool(model=True)
+def get_spending_summary() -> dict: ...
+
+@dashboard_app.tool(model=True)
+def get_monthly_spending(months: int = 6) -> list[dict]: ...
+  </code></pre>
+  <p class="small">Each is a thin wrapper over a <code>db.py</code> query.</p>
+</section>
+
+<!-- Slide 6: Seeding data at render time -->
+<section>
+  <h2>Seed the UI at Render Time</h2>
+  <pre><code class="language-python" data-trim data-noescape>
+@dashboard_app.ui()
+async def financial_dashboard() -> PrefabApp:
+    initial = _build_initial_state()  # calls the tools directly
+
+    with PrefabApp(title="Financial Dashboard",
+                   state=initial, css_class="p-6 max-w-6xl mx-auto"):
+        Heading("Financial Projections Dashboard", level=2)
+
+        with Tabs(name="tab", value="overview"):
+            with Tab(title="Overview", value="overview"):   _overview_tab()
+            with Tab(title="Grants & Funds", value="grants"): _grants_tab()
+            with Tab(title="Personnel", value="personnel"):  _personnel_tab()
+            with Tab(title="Transactions", value="transactions"): _transactions_tab()
+  </code></pre>
+  <p class="small">One tree. State is seeded once; tabs switch client-side.</p>
+</section>
+
+<!-- Slide 7: Overview — stat cards + charts -->
+<section>
+  <h2>Overview &mdash; Cards + Charts</h2>
+  <pre><code class="language-python" data-trim data-noescape>
+with Grid(columns=4, gap=3):
+    _stat_card("Total Available Now",
+               STATE.summary.total_available.currency(),
+               detail=(f"Sponsored {STATE.sponsored_total.currency()} · "
+                       f"Non-Sponsored {STATE.non_sponsored_total.currency()}"),
+               tone="emerald")
+    # ... three more stat cards
+
+with Grid(columns=2, gap=3):
+    BarChart(data=STATE.monthly_chart,
+             series=[ChartSeries("Personnel", color="#3b82f6"),
+                     ChartSeries("Non-Personnel", color="#ec4899")],
+             x_axis="month", stacked=True, height=260)
+    PieChart(data=STATE.pie, data_key="value", name_key="name",
+             inner_radius=55, height=320)
+  </code></pre>
+  <p class="docs">📚 <a href="https://gofastmcp.com/apps/prefab">Prefab: Grid, Card, BarChart, PieChart</a></p>
+</section>
+
+<!-- Slide 8: Grants tab — ForEach -->
+<section>
+  <h2>Grants Tab &mdash; <code>ForEach</code> over State</h2>
+  <pre><code class="language-python" data-trim data-noescape>
+def _grants_tab() -> None:
+    with Grid(columns=2, gap=4):
+        with ForEach("fund_details") as fund:
+            _fund_card(fund)          # one template, four cards
+
+def _fund_card(fund):
+    with Card(css_class="p-5 space-y-3"):
+        CardTitle(f"{fund.name} — {fund.id}")
+        with If(fund.utilization_pct):
+            Progress(value=fund.utilization_bar, variant="info")
+        with If(fund.additional_funding):
+            with ForEach(fund.additional_funding) as af:
+                Row(gap=2)
+                Text(af.period); Text(af.amount_fmt)
+  </code></pre>
+  <p class="small">One <code>Card</code> template. Four funds &rarr; four cards. Reactive, no duplication.</p>
+  <p class="docs">📚 <a href="https://gofastmcp.com/apps/prefab">Prefab: ForEach, If, Progress</a></p>
+</section>
+
+<!-- Slide 9: Transactions — the live filter -->
+<section>
+  <h2>Transactions &mdash; Live <code>CallTool</code></h2>
+  <pre><code class="language-python" data-trim data-noescape>
+# Fund filter: changing the Select re-calls get_transactions
+Select(name="filter_fund", placeholder="All funds",
+       on_change=CallTool(
+           get_transactions,
+           arguments={"fund_id": STATE.filter_fund,
+                      "category": STATE.filter_category,
+                      "sort_by": STATE.filter_sort_by,
+                      "sort_order": STATE.filter_sort_order},
+           on_success=[
+               SetState("txn_rows_raw", RESULT["transactions"]),
+               SetState("txn_count",    RESULT["count"]),
+               SetState("txn_total",    RESULT["total"]),
+           ],
+       ))
+  </code></pre>
+  <p class="small">Every filter change is a real MCP round-trip. The LLM can run the same call.</p>
+</section>
+
+<!-- Slide 10: Personnel — chart built at render time -->
+<section>
+  <h2>Personnel &mdash; Series Built Once</h2>
+  <pre><code class="language-python" data-trim data-noescape>
+def _personnel_tab() -> None:
+    # The BarChart needs one series per fund name; build at open time.
+    fund_names = sorted({a["fund_name"]
+                         for p in get_personnel()
+                         for a in p["allocations"]
+                         if a.get("fund_name")})
+
+    BarChart(data=STATE.effort_chart,
+             series=[ChartSeries(data_key=n, label=n) for n in fund_names],
+             x_axis="name", stacked=True, horizontal=True,
+             height=max(240, 60 * len(personnel) + 60))
+  </code></pre>
+  <p class="small">Python loops at render time produce a concrete series list; the chart is data-driven thereafter.</p>
+</section>
+
+<!-- Slide 11: Same tools for humans and LLMs -->
+<section>
+  <h2>Same Surface, Two Consumers</h2>
+  <div class="two-col">
+    <div>
+      <h3>Human</h3>
+      <ul class="small">
+        <li>Opens the dashboard</li>
+        <li>Clicks the Transactions tab</li>
+        <li>Picks a fund from the dropdown</li>
+        <li>Prefab fires <code>CallTool(get_transactions, ...)</code></li>
+      </ul>
+    </div>
+    <div>
+      <h3>LLM</h3>
+      <ul class="small">
+        <li>Asks "what did we spend on supplies last month against the R01?"</li>
+        <li>Model calls <code>get_transactions(fund_id="501002345", category="LAB SUPPLIES...")</code></li>
+        <li>Same tool, same result, same code</li>
+      </ul>
+    </div>
+  </div>
+  <p class="small">This is the whole point of <code>model=True</code>.</p>
+</section>
+
+<!-- Slide 12: Run it -->
+<section>
+  <h2>Run It</h2>
+  <pre><code class="language-bash" data-trim data-noescape>
+uv sync
+python server.py           # first run auto-seeds data/fin.db
+python db.py --force       # (optional) re-seed from scratch
+  </code></pre>
+  <ul>
+    <li>Connect from Claude Desktop / Cursor / VS Code Copilot</li>
+    <li>Open <strong>Financial Dashboard</strong> in the app picker</li>
+    <li>Or ask directly: <em>"what's my 12-month surplus / deficit?"</em></li>
+    <li>For browser preview: <code>fastmcp dev apps</code></li>
+  </ul>
+  <p class="docs">📚 <a href="https://gofastmcp.com/apps/development">Local preview: fastmcp dev apps</a></p>
+</section>
+
+<!-- Slide 13: Key takeaways -->
+<section>
+  <h2>Key Takeaways</h2>
+  <ul>
+    <li>A real dashboard fits in two Python files</li>
+    <li>Seed state once at open time; use <code>CallTool</code> only where the UI must talk back to the server</li>
+    <li><code>ForEach</code> + <code>Rx</code> pipes collapse repetition &mdash; one card template, N cards</li>
+    <li>Every tool is callable by both the UI and the LLM &mdash; that's the deal you get for making them <code>model=True</code></li>
+    <li>No build step, no bundler, no JavaScript &mdash; FastMCP + Prefab is enough</li>
+  </ul>
+</section>
+
+<!-- Slide 14: Docs reference -->
+<section>
+  <h2>Docs Reference</h2>
+  <table>
+    <tr><th>Topic</th><th>URL</th></tr>
+    <tr><td>MCP Apps overview</td><td><a href="https://gofastmcp.com/apps/overview">gofastmcp.com/apps/overview</a></td></tr>
+    <tr><td><code>FastMCPApp</code></td><td><a href="https://gofastmcp.com/apps/interactive-apps">gofastmcp.com/apps/interactive-apps</a></td></tr>
+    <tr><td>Prefab UI</td><td><a href="https://gofastmcp.com/apps/prefab">gofastmcp.com/apps/prefab</a></td></tr>
+    <tr><td>Prefab components</td><td><a href="https://prefab.prefect.io/docs/components">prefab.prefect.io/docs/components</a></td></tr>
+    <tr><td>Local preview</td><td><a href="https://gofastmcp.com/apps/development">gofastmcp.com/apps/development</a></td></tr>
+  </table>
+</section>
+
+</div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/reveal.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/plugin/highlight/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/reveal.js/5.2.1/plugin/notes/notes.min.js"></script>
+<script>
+Reveal.initialize({ hash: true, plugins: [RevealHighlight, RevealNotes] });
+</script>
+</body>
+</html>
